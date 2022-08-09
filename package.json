@@ -1,18 +1,15 @@
 {
   "name": "se3-server",
   "version": "1.0.0",
-  "description": "",
   "main": "index.js",
   "scripts": {
     "start": "node .",
     "test": "node test"
   },
-  "keywords": [],
   "author": {
     "name": "Kamiloso",
     "url": "https://github.com/Kamiloso"
   },
-  "license": "ISC",
   "dependencies": {
     "ws": "^8.8.1"
   }
