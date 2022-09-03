@@ -9,11 +9,12 @@ const health_base = 1.0985;
 const unit = 0.0008;
 
 //Global variables
-var serverVersion = "Beta 1.13";
-var serverRedVersion = "Beta_1_13";
+var serverVersion = "Beta 1.14";
+var serverRedVersion = "Beta_1_14";
 var clientDatapacksVar = "";
 var seed;
-var gpl_number = 30;
+var hourHeader = "";
+var gpl_number = 32;
 var max_players = 128;
 
 if(Number.isInteger(config.max_players))
@@ -109,7 +110,19 @@ const bulletTemplate = {
   damaged: []
 };
 
+const scrTemplate = {
+  generalData: [],
+  additionalData: [],
+  bID: -1,
+  type: 0,
+  posCX: 0,
+  posCY: 0,
+  timeToDisappear: 1000,
+  timeToLose: 1000,
+};
+
 var bulletsT = [];
+var scrs = [];
 
 var growSolid = [];
 growSolid[5] = "4500;12000;6";
@@ -125,10 +138,11 @@ var craftings = "";
 var craftMaxPage = "";
 var biomeChances = "";
 var drillLoot = new Array(16);
-var fobGenerate = new Array(16);
+var fobGenerate = new Array(64);
 var biomeTags = new Array(32);
+var customStructures = new Array(32);
 var typeSet = new Array(224);
-var gameplay = new Array(32);
+var gameplay = new Array(64);
 var modifiedDrops = new Array(128);
 var translateFob = [];
 var translateAsteroid = [];
@@ -140,6 +154,7 @@ var size_updates = 0;
 drillLoot.fill(""); Object.seal(drillLoot);
 fobGenerate.fill(""); Object.seal(fobGenerate);
 biomeTags.fill(""); Object.seal(biomeTags);
+customStructures.fill(""); Object.seal(customStructures);
 typeSet.fill(""); Object.seal(typeSet);
 gameplay.fill(""); Object.seal(gameplay);
 modifiedDrops.fill(""); Object.seal(modifiedDrops);
@@ -221,7 +236,8 @@ function writeF(nate, text) {
     pathCurrent += foldT[i] + "/";
     if (!existsF(pathCurrent)) fs.mkdirSync(pathCurrent);
   }
-  fs.writeFileSync(nate, String(text));
+  /*if(existsF(nate)) fs.writeFileSync(nate, String(text), {flag:"rs+"});*/
+  /*else*/ fs.writeFileSync(nate, String(text));
 }
 function removeF(nate) {
   fs.unlinkSync(nate);
@@ -506,8 +522,9 @@ function clientDatapacks() {
     typeSet.join("'"),
     gameplay.join("'").replaceAll(".", ","),
     modifiedDrops.join("'"),
-    biomeTags.join("'"),
+    biomeTags.join("'").replaceAll(" ", "_"),
     biomeChances,
+    customStructures.join("'").replaceAll(" ", "^"),
   ].join("~");
 }
 
@@ -537,7 +554,7 @@ function SaveAllNow() {
   for (i = 0; i < lngt; i++) chunkSave(i);
 }
 
-//Save all once per 5 seconds (or less if lags)
+//Save all once per 15 seconds (or less if lags)
 setInterval(function () { // <interval #1>
   SaveAllNow();
 
@@ -557,7 +574,7 @@ setInterval(function () { // <interval #1>
       i--;
     }
   }
-}, 5000);
+}, 15000);
 
 function getProtLevelAdd(art)
 {
@@ -619,8 +636,14 @@ function CookedDamage(pid,dmg)
 }
 function getBulletDamage(type,owner,pid)
 {
-  var artid = plr.backpack[pid].split(";")[30] - 41;
-  if(plr.backpack[pid].split(";")[31]==0) artid = -41;
+  var artid=-41;
+  if(pid!=-1 && pid!=-2)
+  {
+    artid = plr.backpack[pid].split(";")[30] - 41;
+    if(plr.backpack[pid].split(";")[31]==0) artid = -41;
+  }
+  else if(pid==-1) artid=-41;
+  else if(pid==-2) artid=6;
 
   if(artid==6 && type==3) return 0;
 
@@ -690,6 +713,35 @@ setInterval(function () { // <interval #2>
           }
         }
 
+        var rr = 7.58;
+        xb = start_xa + (xv);
+        yb = start_ya + (yv);
+        var lngts = scrs.length;
+        for(j=0;j<lngts;j++)
+        {
+          var l = scrs[j].bID;
+          if(scrs[j].additionalData[2-2]=="2")
+          {
+            var xc = scrs[j].posCX + ScrdToFloat(scrs[j].additionalData[8-2]);
+            var yc = scrs[j].posCY + ScrdToFloat(scrs[j].additionalData[9-2]);
+            if(((xb-xc)**2)+((yb-yc)**2) <= ((rr)**2))
+            {
+              if(bulletsT[i].type!=3) {
+                DamageBoss(j, getBulletDamage(bulletsT[i].type, bulletsT[i].owner, -1) );
+                destroyBullet(i, ["", bulletsT[i].owner, bulletsT[i].ID, bulletsT[i].age], true);
+                break;
+              }
+              else if(!bulletsT[i].damaged.includes(-l)) {
+                if(scrs[j].type!=6) DamageBoss(j, getBulletDamage(bulletsT[i].type, bulletsT[i].owner, -1) );
+                else DamageBoss(j, getBulletDamage(bulletsT[i].type, bulletsT[i].owner, -2) );
+                bulletsT[i].damaged.push(-l);
+                destroyBullet(i, ["", bulletsT[i].owner, bulletsT[i].ID, bulletsT[i].age], true);
+                break;
+              }
+            }
+          }
+        }
+
         bulletsT[i].age++;
         if(bulletsT[i].age>=bulletsT[i].max_age)
         {
@@ -731,6 +783,35 @@ setInterval(function () { // <interval #2>
 			      if(plr.sRegTimer[i]<0) plr.sRegTimer[i]=0;
 		      }
         }
+      }
+
+      //[Scrs: Multiplayer boss mechanics update]
+      lngt = scrs.length;
+      for(i=0;i<lngt;i++) {
+        var sta = scrs[i].additionalData[2-2];
+        scrs[i].additionalData[3-2] = (parseInt(scrs[i].additionalData[3-2])+1)+"";
+        if(sta=="2") scrs[i].additionalData[4-2] = (parseInt(scrs[i].additionalData[4-2])-1)+"";
+        if((sta=="1" || sta=="3" || sta=="4") && parseInt(scrs[i].additionalData[3-2])>=50)
+        {
+          if(sta=="1") scrs[i].additionalData[2-2] = "2";
+          else if(sta=="3" || sta=="4") scrs[i].additionalData[2-2] = "0";
+          resetScr(i);
+        }
+        else if(sta=="2" && parseInt(scrs[i].additionalData[4-2])<=0)
+        {
+          scrs[i].additionalData[2-2] = "3";
+          resetScr(i);
+        }
+        else if(sta=="2" && parseInt(scrs[i].additionalData[6-2])<=0)
+        {
+          scrs[i].additionalData[2-2] = "4";
+          resetScr(i);
+        }
+        /*if(sta=="2") boss_behaviour.BehaviourUpdate50fps(
+
+          REFERENCE DATA HERE
+
+        );*/
       }
 
       //Connection time
@@ -806,9 +887,28 @@ setInterval(function () { // <interval #2>
       for (i = 0; i < lngt; i++) {
         if (chunk_waiter[i] > 0) chunk_waiter[i]--;
       }
+
+      //[Scrs: Server counters actions]
+      lngt = scrs.length;
+      for(i=0;i<lngt;i++) {
+        scrs[i].timeToDisappear-=5;
+        scrs[i].timeToLose-=5;
+        if(scrs[i].timeToDisappear<=0)
+        {
+          scrs.remove(i);
+          lngt--; i--;
+          continue;
+        }
+        if(scrs[i].timeToLose<=0 && scrs[i].additionalData[2-2]=="2")
+        {
+          scrs[i].additionalData[2-2] = "3";
+          resetScr(i);
+        }
+      }
     }
     if((date_before-date_start) % 1000 == 0) //precisely 1 times per second
     {
+      updateHourHeader();
       setTerminalTitle("SE3 server | " + serverVersion +
         " | Download: " + size_download/1000 + "KB/s" +
         " | Upload: " + size_upload/1000 + "KB/s" +
@@ -826,6 +926,109 @@ function setTerminalTitle(title)
     String.fromCharCode(27) + "]0;" + title + String.fromCharCode(7)
   );
 }
+function updateHourHeader()
+{
+  var date_ob = new Date();
+  var hours = ToTwo(date_ob.getHours());
+  var minutes = ToTwo(date_ob.getMinutes());
+  var seconds = ToTwo(date_ob.getSeconds());
+  hourHeader = `[${hours}:${minutes}:${seconds}] `;
+}
+function ToTwo(n) {
+  if(n>9) return n+"";
+  else return "0"+n;
+}
+function getTimeSize(n)
+{
+  if(n=="0") return "9000";
+  if(n=="1") return "10500";
+  if(n=="2") return "12000";
+  return "3000";
+}
+function getBossHealth(n,typ)
+{
+  if(typ==0)
+  {
+    if(n=="0") return "160000";
+    if(n=="1") return "180000";
+    if(n=="2") return "200000";
+  }
+  return "40000";
+}
+function resetScr(i)
+{
+  var mem6 = scrs[i].additionalData[6-2];
+  var mem7 = scrs[i].additionalData[7-2];
+  var mem8 = scrs[i].additionalData[8-2];
+  var mem9 = scrs[i].additionalData[9-2];
+  var mem10 = scrs[i].additionalData[10-2];
+
+  var j;
+  for(j=3;j<=20;j++) scrs[i].additionalData[j-2] = "0";
+  var sta = scrs[i].additionalData[2-2];
+
+  scrs[i].timeToLose = 1000;
+
+  if(sta=="0")
+  {
+    
+  }
+  else if(sta=="1")
+  {
+    scrs[i].additionalData[5-2] = getTimeSize(scrs[i].generalData[1]); //Max time
+    scrs[i].additionalData[4-2] = scrs[i].additionalData[5-2]; //Time left
+    scrs[i].additionalData[7-2] = getBossHealth(scrs[i].generalData[1],scrs[i].type); //Max health
+    scrs[i].additionalData[6-2] = scrs[i].additionalData[7-2]; //Health left
+  }
+  else if(sta=="2")
+  {
+    scrs[i].additionalData[5-2] = getTimeSize(scrs[i].generalData[1]); //Max time
+    scrs[i].additionalData[4-2] = scrs[i].additionalData[5-2]; //Time left
+    scrs[i].additionalData[7-2] = mem7; //Max health
+    scrs[i].additionalData[6-2] = scrs[i].additionalData[7-2]; //Health left
+  }
+  else if(sta=="3")
+  {
+    scrs[i].additionalData[7-2] = mem7; //Max health
+    scrs[i].additionalData[6-2] = mem6; //Health left
+    scrs[i].additionalData[8-2] = mem8; scrs[i].additionalData[9-2] = mem9; scrs[i].additionalData[10-2] = mem10; //Position & Rotation
+  }
+  else if(sta=="4")
+  {
+    scrs[i].additionalData[7-2] = mem7; //Max health
+    scrs[i].additionalData[8-2] = mem8; scrs[i].additionalData[9-2] = mem9; scrs[i].additionalData[10-2] = mem10; //Position & Rotation
+
+    //Add 1 to wave number
+    scrs[i].generalData[1] = (parseInt(scrs[i].generalData[1])+1)+"";
+    var det = asteroidIndex(scrs[i].bID);
+    chunk_data[det[0]][det[1]][1] = scrs[i].generalData[1];
+    sendToAllClients(
+      "/RetEmitParticles -1 10 "+
+      ((ScrdToFloat(mem8)+scrs[i].posCX)+"").replaceAll(".",",")+" "+
+      ((ScrdToFloat(mem9)+scrs[i].posCY)+"").replaceAll(".",",")+
+      " X X"
+    );
+  }
+}
+function DamageBoss(i,dmg)
+{
+  if(scrs[i].additionalData[2-2]!="2") return;
+  var actualHealth = parseInt(scrs[i].additionalData[6-2])/100;
+  actualHealth -= dmg;
+  scrs[i].additionalData[6-2] = Math.floor(actualHealth*100)+"";
+  if(dmg!=0) sendToAllClients(
+    "/RetEmitParticles -1 9 "+
+    ((ScrdToFloat(scrs[i].additionalData[8-2])+scrs[i].posCX)+"").replaceAll(".",",")+" "+
+    ((ScrdToFloat(scrs[i].additionalData[9-2])+scrs[i].posCY)+"").replaceAll(".",",")+
+    " X X"
+  );
+}
+function FloatToScrd(src) {
+  return Math.floor(src*100000)+"";
+}
+function ScrdToFloat(src) {
+  return parseInt(src)/100000;
+}
 
 //RetPlayerUpdate (25 times per second by default)
 setInterval(function () {  // <interval #2>
@@ -841,11 +1044,25 @@ setInterval(function () {  // <interval #2>
     sendToAllClients(eff);
   }
 
-  // - Dynamic data
+  //RPU - Dynamic data
   eff = "/RPU " + max_players + " ";
   eff += GetRPU(plr.players,lngt);
   eff += " X X"
   sendToAllClients(eff);
+
+  for(i=0;i<scrs.length;i++)
+  {
+    var lc3 = scrs[i].generalData.join(";") + ";" + scrs[i].additionalData.join(";");
+    
+    //RSD - Boss data
+    sendToAllClients(
+        "/RSD " +
+        scrs[i].bID +
+        " " +
+        lc3 +
+        " 1024 X X"
+    );
+  }
 
   for(i=0;i<max_players;i++)
   {
@@ -869,7 +1086,7 @@ setInterval(function () { //<interval #3>
 //Kick functions
 function kick(i) {
   SaveAllNow();
-  console.log(plr.nicks[i] + " disconnected [" + i + "]");
+  console.log(hourHeader + plr.nicks[i] + " disconnected");
   var pom = se3_ws[i];
   se3_ws[i] = "";
   se3_wsS[i] = "";
@@ -1214,7 +1431,9 @@ function serverDrill(ulam, place) {
   }
 }
 function drillGet(det) {
-  var typp = chunk_data[det[0]][det[1]][0];
+  var typp = parseInt(chunk_data[det[0]][det[1]][0]+"");
+  if(typp<0) typp=0;
+  else typp = typp % 16;
   var ltdt = drillLoot[typp].split(";");
   var lngt = ltdt.length;
 
@@ -1234,11 +1453,15 @@ function growActive(ulam) {
   var det = asteroidIndex(ulam);
   for (i = 0; i < 20; i++) blockTab[i] = chunk_data[det[0]][det[1]][i + 1];
 
+  var typpu = parseInt(chunk_data[det[0]][det[1]][0]+"");
+  if(typpu<0) typpu = 0;
+  else typpu = typpu % 16;
+
   for (i = 0; i < 20; i++) {
     block = blockTab[i];
     if (
       ["25"].includes(block) ||
-      (["5", "6"].includes(block) && chunk_data[det[0]][det[1]][0] == 6)
+      (["5", "6"].includes(block) && typpu == 6)
     ) {
       if (!growT.includes(ulam + "g" + i)) {
         if (chunk_data[det[0]][det[1]][21 + 2 * i] == "") {
@@ -1354,12 +1577,14 @@ function checkFobDataChange(ulam, place, item, deltaCount, id21) {
     return false;
   }
 
-  var max_count;
+  var max_count = -1;
   if (id21 == 21) max_count = 35;
   if (id21 == 2) max_count = 5;
+  if (id21 == 52) max_count = 10;
 
   if (
     chunk_data[det[0]][det[1]][21 + 2 * parseInt(place)] == "" ||
+    chunk_data[det[0]][det[1]][21 + 2 * parseInt(place)] == 0 ||
     chunk_data[det[0]][det[1]][21 + 2 * parseInt(place)] == item
   ) {
     var countEnd = parseInt(
@@ -1583,7 +1808,7 @@ wss.on("connection", function connection(ws) {
 
       //impulse player damage
       var j, caray = censured.split(";");
-      if(caray.length>1 && pvp && arg[7]=="T")
+      if(caray.length>1 && arg[7]=="T")
       {
         var rr = 2;
 
@@ -1607,6 +1832,7 @@ wss.on("connection", function connection(ws) {
         var aab = (yb-ya)/(xb-xa);
         var adc = -1/(aab);
 
+        if(pvp)
         for(j=0;j<max_players;j++)
         {
           if(plr.players[j]!="0" && plr.players[j]!="1" && arg[1]!=j && !plr.impulsed[arg[1]].includes(j))
@@ -1621,6 +1847,25 @@ wss.on("connection", function connection(ws) {
             {
               DamageFLOAT(j,parseFloatE(gameplay[29]))
               plr.impulsed[arg[1]].push(j);
+            }
+          }
+        }
+
+        rr = 8.9;
+        xb = parseFloatE(arg[8]);
+        yb = parseFloatE(arg[9]);
+        var lngts = scrs.length;
+        for(j=0;j<lngts;j++)
+        {
+          var l = scrs[j].bID;
+          if(scrs[j].additionalData[2-2]=="2" && !plr.impulsed[arg[1]].includes(-l))
+          {
+            var xc = scrs[j].posCX + ScrdToFloat(scrs[j].additionalData[8-2]);
+            var yc = scrs[j].posCY + ScrdToFloat(scrs[j].additionalData[9-2]);
+            if(((xb-xc)**2)+((yb-yc)**2) <= ((rr)**2))
+            {
+              DamageBoss(j,parseFloatE(gameplay[29]))
+              plr.impulsed[arg[1]].push(-l);
             }
           }
         }
@@ -1688,7 +1933,7 @@ wss.on("connection", function connection(ws) {
           );
           se3_ws[i] = ws;
           se3_wsS[i] = "menu";
-          console.log(plr.nicks[i] + " connected [" + i + "]");
+          console.log(hourHeader + plr.nicks[i] + " connected [" + i + "]");
           break;
         }
       }
@@ -1727,7 +1972,7 @@ wss.on("connection", function connection(ws) {
 
       var lc3T, lc3;
       var det = asteroidIndex(ulamID);
-      if (chunk_data[det[0]][det[1]][0] == "") {
+      if (chunk_data[det[0]][det[1]][0] == "" || parseInt(chunk_data[det[0]][det[1]][0]) >= 1024) {
         lc3 = generateAsteroid(localSize);
         lc3T = lc3.split(";");
         for (i = 0; i <= 20; i++) chunk_data[det[0]][det[1]][i] = lc3T[i];
@@ -1746,6 +1991,140 @@ wss.on("connection", function connection(ws) {
           nbts(ulamID, "n", "0;0") +
           " X X"
       );
+    }
+    if (arg[0] == "/ScrData") {
+      //ScrData 1[PlayerID] 2[bID] 3[scrID] 4[bossType] 5[bossPosX] 6[bossPosY]
+      if (!checkPlayer(arg[1], arg[msl - 2])) return;
+
+      var bID = arg[2];
+      var scrID = arg[3];
+      var bossType = arg[4];
+      var bossPosX = arg[5];
+      var bossPosY = arg[6];
+
+      var lc3T, lc3, inds=-1, lngts=scrs.length;
+
+      for(i=0;i<lngts;i++)
+      {
+        if(scrs[i].bID==bID) {
+          inds = i;
+          break;
+        }
+      }
+
+      if(inds==-1)
+      {
+        if(scrID=="1024")
+        {
+          var det = asteroidIndex(bID);
+          if (chunk_data[det[0]][det[1]][0]!=scrID)
+          {
+            //Not exists
+            lc3 = scrID+";0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0";
+            lc3T = lc3.split(";");
+            for(i=0;i<=20;i++) chunk_data[det[0]][det[1]][i] = lc3T[i];
+          }
+          else
+          {
+            //Exists
+            lc3 = chunk_data[det[0]][det[1]][0]+";"+chunk_data[det[0]][det[1]][1];
+            for(i=2;i<=20;i++) lc3 += ";0";
+            lc3T = lc3.split(";");
+            for(i=0;i<=20;i++) chunk_data[det[0]][det[1]][i] = lc3T[i];
+          }
+
+          var tpl = Object.assign({},scrTemplate);
+          tpl.bID = bID;
+          tpl.type = bossType;
+          tpl.posCX = parseFloat(bossPosX);
+          tpl.posCY = parseFloat(bossPosY);
+          tpl.generalData = [];
+          tpl.additionalData = [];
+          tpl.generalData = [lc3T[0],lc3T[1]];
+          for(i=2;i<=20;i++) tpl.additionalData[i-2] = "0";
+          scrs.push(tpl);
+        }
+        else return;
+      }
+    }
+    if(arg[0] == "/ScrRefresh")
+    {
+      //ScrRefresh 1[PlayerID] 2[bID] 3[inArena]
+      if (!checkPlayer(arg[1], arg[msl - 2])) return;
+
+      var bID = arg[2];
+      var inArena = (arg[3]=="T");
+
+      var lngts = scrs.length;
+      for(i=0;i<lngts;i++)
+      {
+        if(scrs[i].bID==bID) {
+          scrs[i].timeToDisappear = 1000;
+          if(inArena) scrs[i].timeToLose = 1000;
+          break;
+        }
+      }
+    }
+    if(arg[0] == "/GiveUpTry")
+    {
+      //GiveUpTry 1[PlayerID] 2[bID]
+      if (!checkPlayer(arg[1], arg[msl - 2])) return;
+
+      var bID = arg[2];
+      var blivID = arg[msl - 1];
+      var in_arena_range = 37;
+
+      var j,lngts = scrs.length;
+      for(i=0;i<lngts;i++)
+      {
+        if(scrs[i].bID==bID) {
+          if(scrs[i].additionalData[2-2]!="2") break;
+
+          var players_inside=1;
+          for(j=0;j<max_players;j++)
+            if(plr.players[j]!="0" && plr.players[j]!="1" && arg[1]!=j)
+            {
+              var plas = plr.players[j].split(";");
+              var dx = parseFloat(plas[0]) - scrs[i].posCX;
+              var dy = parseFloat(plas[1]) - scrs[i].posCY;
+              if(dx**2 + dy**2 <= (in_arena_range)**2) players_inside++;
+            }
+
+          if(players_inside==1) scrs[i].additionalData[4-2] = "1";
+          else sendTo(ws,"/RetGiveUpTeleport "+arg[1]+" "+bID+" 1024 X "+blivID);
+          break;
+        }
+      }
+    }
+    if(arg[0] == "/TryBattleStart")
+    {
+      //TryBattleStart 1[PlayerID] 2[bID] 3[fobID] 4[fobIndex]
+      if (!checkPlayer(arg[1], arg[msl - 2])) return;
+
+      var bID = arg[2];
+      var fobID = arg[3];
+      var fobIndex = arg[4];
+
+      var lngts = scrs.length;
+      for(i=0;i<lngts;i++)
+      {
+        if(scrs[i].bID==bID)
+        {
+          if(scrs[i].additionalData[2-2]=="0" && checkFobDataChange(fobID, fobIndex, "5", "-10", "52"))
+          {
+            var gCountEnd = fobDataChange(fobID, fobIndex, "5", "-10");
+            scrs[i].additionalData[2-2] = "1";
+            resetScr(i);
+            sendToAllClients(
+              "/RetFobsDataChange " +
+                fobID + " " +
+                fobIndex + " 5 -10 -1 " + //itemID, deltaCount, playerID
+                gCountEnd + " 52 X X" //fob21ID
+            );
+          }
+          return;
+        }
+      }
     }
     if (arg[0] == "/FobsChange") {
       //FobsChange 1[PlayerID] 2[UlamID] 3[PlaceID] 4[startFob1] 5[startFob2] 6[EndFob] 7[DropID] 8[Count] 9[Slot] 10![CandyCount]
@@ -2133,6 +2512,38 @@ wss.on("connection", function connection(ws) {
         "/RetInvisibilityPulse " + arg[1] + " " + arg[2] + " X X"
       );
     }
+    if (arg[0] == "/Heal") {
+      //Heal 1[PlayerID] 2[healID]
+      if (!checkPlayer(arg[1], arg[msl - 2])) return;
+      if(arg[msl - 1] != plr.livID[arg[1]]) {
+        sendTo(ws,"/RetHeal "+arg[1]+" "+arg[2]+" X X");
+        return;
+      }
+
+      var pid=arg[1];
+
+      if(arg[2]=="1")
+      {
+        var artid = plr.backpack[pid].split(";")[30] - 41;
+        if(plr.backpack[pid].split(";")[31]=="0") artid = -41;
+
+        var sth1 = plr.sHealth[pid];
+
+        var potHHH = parseFloat(plr.upgrades[pid].split(";")[0]) + getProtLevelAdd(artid) + parseFloat(gameplay[26]);
+		    if(potHHH<-50) potHHH = -50; if(potHHH>56.397) potHHH = 56.397;
+		    var heal=0.02*parseFloat(gameplay[31])/(Math.ceil(50*Math.pow(health_base,potHHH))/50);
+        if(heal<0) heal=0;
+        
+        plr.sHealth[pid] += heal;
+        if(plr.sHealth[pid]>1) plr.sHealth[pid]=1;
+
+        var sth2 = plr.sHealth[pid];
+
+        var del = ((sth2-sth1)+"").replaceAll(".",",");
+        sendTo(ws,"R "+del+" "+plr.immID[pid]+" "+plr.livID[pid]); //Medium type message
+        sendTo(ws,"/RetHeal "+arg[1]+" "+arg[2]+" X X");
+      }
+    }
     if (arg[0] == "/Backpack") {
       //Backpack 1[PlayerID] 2[Item] 3[Count] 4[Slot]
       if (!checkPlayer(arg[1], arg[msl - 2])) return;
@@ -2162,7 +2573,7 @@ wss.on("connection", function connection(ws) {
           ws.close();
         }catch{}
       else {
-        console.log(plr.nicks[imkConID] + " joined [" + imkConID + "]");
+        console.log(hourHeader + plr.nicks[imkConID] + " joined");
 
         se3_ws[imkConID] = ws;
         se3_wsS[imkConID] = "game";
@@ -2210,6 +2621,9 @@ function translate(str, mod) {
   if (mod == 1) {
     for (i = 0; i < 16; i++) {
       if (translateAsteroid[i] == str) return i + "";
+      if (translateAsteroid[i]+"A" == str) return (16+i) + "";
+      if (translateAsteroid[i]+"B" == str) return (32+i) + "";
+      if (translateAsteroid[i]+"C" == str) return (48+i) + "";
     }
   } else if (mod == 2) {
     for (i = 0; i < 128; i++) {
@@ -2318,18 +2732,12 @@ function datapackTranslate(dataSource) {
   for (i = 0; i < lngt; i++) {
     c = dataSource[i];
     if (c == "<") comment = true;
-    if (c == "'" && !comment) {
-      catch_all = !catch_all;
-      continue;
+    if (c == "'" && !comment) { catch_all = !catch_all; continue; }
+    if((catch_all || (c!=" " && c!="\r" && c!="\n" && c!="\t")) && !comment)
+    {
+      if(c=="\r" || c=="\n") raw = raw + " ";
+      else raw = raw + c;
     }
-    if (
-      (c != " " || catch_all) &&
-      c != "\t" &&
-      c != "\r" &&
-      c != "\n" &&
-      !comment
-    )
-      raw = raw + c;
     if (c == ">") comment = false;
   }
 
@@ -2426,6 +2834,10 @@ function finalTranslate(varN) {
             gameplay[3] = parseFloatE(jse3Dat[i]) + "";
           if (psPath[1] == "red_bullet_damage")
             gameplay[27] = parseFloatE(jse3Dat[i]) + "";
+          if (psPath[1] == "bullet_owner_push")
+            gameplay[30] = parseFloatE(jse3Dat[i]) + "";
+            if (psPath[1] == "healing_potion_hp")
+            gameplay[31] = parseFloatE(jse3Dat[i]) + "";
 
           if (psPath[1] == "player_normal_speed")
             gameplay[9] = parseFloatE(jse3Dat[i]) + "";
@@ -2472,6 +2884,15 @@ function finalTranslate(varN) {
         } catch {
           datapackError("Error in variable: " + jse3Var[i]);
         }
+      }
+      else if(psPath[0]=="custom_structures")
+      {
+          try{
+
+          mID=parseIntE(psPath[1]);
+          customStructures[mID]=jse3Dat[i].replaceAll('^',' ');
+
+          }catch{datapackError("Error in variable: " + jse3Var[i]);}
       }
     } else if (lgt == 3) {
       if (psPath[0] == "game_translate") {
@@ -2791,6 +3212,8 @@ function checkDatapackGoodE() {
       !drillGoodItem(drillLoot[i])
     )
       nev++;
+  }
+  for (i = 0; i < 64; i++) {
     if (!intsAll(fobGenerate[i], 3) || !in1000(fobGenerate[i], false)) nev++;
   }
   for (i = 0; i < 224; i++) {
@@ -2819,15 +3242,15 @@ function datapackPaste(splitTab) {
     craftMaxPage = parseIntE(raws[1]) + "";
 
     for (i = 0; i < 16; i++) drillLoot[i] = raws[2].split("'")[i];
-    for (i = 0; i < 16; i++) fobGenerate[i] = raws[3].split("'")[i];
+    for (i = 0; i < 64; i++) fobGenerate[i] = raws[3].split("'")[i];
     for (i = 0; i < 224; i++) typeSet[i] = raws[4].split("'")[i];
     for (i = 0; i < gpl_number; i++) {
       if (false) gameplay[i] = parseIntE(raws[5].split("'")[i]) + "";
       else gameplay[i] = parseFloatE(raws[5].split("'")[i]) + "";
     }
     for (i = 0; i < 128; i++) modifiedDrops[i] = raws[6].split("'")[i];
-    for (i = 0; i < 32; i++)
-      biomeTags[i] = raws[7].replaceAll(" ", "_").split("'")[i];
+    for (i = 0; i < 32; i++) biomeTags[i] = raws[7].replaceAll(" ", "_").split("'")[i];
+    for (i = 0; i < 32; i++) customStructures[i] = raws[9].replaceAll("^"," ").split("'")[i];
 
     checkDatapackGoodE();
   } catch {
@@ -2890,10 +3313,11 @@ if (!existsF("ServerUniverse/Seed.se3")) {
 
 function laggy_comment(nn)
 {
-  if(nn<=0) return "\nWarning: Can't join to server with "+max_players+" max players.";
-  if(nn>=1 && nn<=128) return "";
-  if(nn>=129 && nn<=512) return "\nWarning: It is recommended to set max players to 128 or less";
-  if(nn>=513) return "\nWarning: Too many players! Shut it down! Your device might explode, but of course you can try joining ;)";
+  if(nn<=0) return "\r\nWarning: Can't join to server with "+max_players+" max players.";
+  if(nn>=1 && nn<=25) return "";
+  if(nn>=26 && nn<=150) return "\r\nWarning: Over 25 max players can cause lags on some weaker devices";
+  if(nn>=151 && nn<=500) return "\r\nWarning: Over 150 max players can cause lags on most devices";
+  if(nn>=501) return "\r\nWarning: Too many players! Shut it down! Your device might explode, but of course you can try joining ;)";
 }
 
 console.log("Server started on version: [" + serverVersion + "]");
@@ -2901,4 +3325,5 @@ console.log("Max players: [" + max_players + "]");
 console.log("Port: [" + connectionOptions.port + "]" + laggy_comment(max_players));
 console.log("-------------------------------");
 
+updateHourHeader();
 setTerminalTitle("SE3 server | "+serverVersion+" | "+getRandomFunnyText());
