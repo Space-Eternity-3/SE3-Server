@@ -4,18 +4,25 @@ const path = require("path");
 const config = require("./config.json");
 const { runInNewContext } = require("vm");
 const { parse } = require("path");
+const { func } = require("./functions");
+const { CBoss } = require("./behaviour");
 
 const health_base = 1.0985;
 const unit = 0.0008;
+const in_arena_range = 37;
 
 //Global variables
-var serverVersion = "Beta 1.14";
-var serverRedVersion = "Beta_1_14";
+var serverVersion = "Beta 1.15";
+var serverRedVersion = "Beta_1_15";
 var clientDatapacksVar = "";
 var seed;
 var hourHeader = "";
-var gpl_number = 32;
+var gpl_number = 36;
 var max_players = 128;
+
+var boss_damages = [0,0,0,0,35,4.25,6,5,0,10,6,3.75,5,8,0,0];
+var other_bullets_colliders = [0,0.08,0.08,0.08,1,0.25,0.25,1.2,1.68,0.92,0.92,0.25,0.25,0.25,0.08,0.08];
+var bullet_air_consistence = [0,0,0,1,0,1,0,1,0,0,0,0,0,1,0,1];
 
 if(Number.isInteger(config.max_players))
   max_players = config.max_players;
@@ -65,6 +72,7 @@ var plr = {
 
   mems: [Object.assign({},memTemplate)],
   impulsed: [[]],
+  bossMemories: [[]],
 };
 
 var ki, kj, kd = Object.keys(plr);
@@ -74,7 +82,7 @@ for(ki=1;ki<max_players;ki++)
   {
     if(kd[kj]=="mems")
       plr[kd[kj]].push(Object.assign({},plr[kd[kj]][0]));
-    else if(kd[kj]=="impulsed")
+    else if(kd[kj]=="impulsed"||kd[kj]=="bossMemories")
       plr[kd[kj]].push([]);
     else
       plr[kd[kj]].push(plr[kd[kj]][0]);
@@ -93,6 +101,12 @@ const bulletTemplate = {
   type: 0,
   age: 0,
   max_age: 100,
+
+  steerPtr: -1,
+  boss_owner: 0,
+
+  normal_damage: 0,
+  is_unstable: false,
   
   start: {
     x: 0,
@@ -107,18 +121,21 @@ const bulletTemplate = {
     y: 0
   },
 
-  damaged: []
+  damaged: [],
+  immune: []
 };
 
 const scrTemplate = {
-  generalData: [],
-  additionalData: [],
+  dataX: [],
+  dataY: [],
+  bulCols: [],
   bID: -1,
   type: 0,
   posCX: 0,
   posCY: 0,
   timeToDisappear: 1000,
   timeToLose: 1000,
+  behaviour: -1,
 };
 
 var bulletsT = [];
@@ -150,6 +167,9 @@ var translateAsteroid = [];
 var size_download = 0;
 var size_upload = 0;
 var size_updates = 0;
+var size_tps = 1;
+
+var current_tick = 0;
 
 drillLoot.fill(""); Object.seal(drillLoot);
 fobGenerate.fill(""); Object.seal(fobGenerate);
@@ -158,6 +178,286 @@ customStructures.fill(""); Object.seal(customStructures);
 typeSet.fill(""); Object.seal(typeSet);
 gameplay.fill(""); Object.seal(gameplay);
 modifiedDrops.fill(""); Object.seal(modifiedDrops);
+
+//Classes
+class CShooter
+{
+  constructor(bul_typ,angl_deg,deviat_deg,precis_deg,rad,ths,alway,freq) {
+    this.bullet_type = bul_typ;
+    this.angle = angl_deg*3.14159/180;
+    this.max_deviation = deviat_deg*3.14159/180;
+    this.precision = precis_deg*3.14159/180;
+    this.radius = rad;
+    this.thys = ths;
+    this.stupid = alway;
+    this.frequency = freq;
+  }
+  CanShoot(x,y)
+  {
+    var pat = func.RotatePoint([x,y],-(this.angle+func.ScrdToFloat(this.thys.dataY[10-2])*3.14159/180),false);
+    x = pat[0]-this.radius; y = pat[1];
+
+    var target_agl = Math.abs(Math.atan2(y,x));
+    return (target_agl <= this.max_deviation);
+  }
+  BestDeviation(x,y)
+  {
+    var pat = func.RotatePoint([x,y],-(this.angle+func.ScrdToFloat(this.thys.dataY[10-2])*3.14159/180),false);
+    x = pat[0]-this.radius; y = pat[1];
+    return Math.atan2(y,x);
+  }
+}
+class CShape
+{
+  constructor(neme1,shape_description1,default_offset1,col_id) {
+    this.neme = neme1;
+    this.sds = shape_description1; // sx sy
+    this.dof = default_offset1; // cx cy lx ly lrot
+    this.cop = {cx:0,cy:0};
+    this.col_identifier = col_id;
+  }
+  SetShapeCollider(dx,dy,drot)
+  {
+    var alpha = (drot) * Math.PI / 180;
+    var beta = (this.dof.lrot+drot) * Math.PI / 180;
+
+    var lroted = func.RotatePoint([this.dof.lx,this.dof.ly],alpha,false);
+    var cx = this.dof.cx + dx + lroted[0];
+    var cy = this.dof.cy + dy + lroted[1];
+    this.cop.cx = cx; this.cop.cy = cy;
+
+    if(this.neme=="sphere") return;
+
+    var srt1 = func.RotatePoint([0,this.sds.sy],beta,false)
+    var srt2 = [-srt1[0],-srt1[1]];
+    srt1[0] += cx; srt1[1] += cy;
+    srt2[0] += cx; srt2[1] += cy;
+
+    if(this.neme=="cylinder" || this.neme=="capsule") func.CollisionLinearBulletSet(srt1[0],srt1[1],srt2[0],srt2[1],this.sds.sx);
+  }
+  IsSphereColliding(cx,cy,r1)
+  {
+    if(this.neme=="sphere") return func.CollisionPointCheck(this.cop.cx,this.cop.cy,cx,cy,this.sds.sx,r1);
+    if(this.neme=="cylinder" || this.neme=="capsule") return func.CollisionLinearCheck(cx,cy,r1,(this.neme=="capsule"));
+    return false;
+  }
+}
+class CInfo
+{
+  constructor(plas,buls) {
+    this.plas = plas;
+    this.buls = buls;
+    this.players = [];
+    this.deltaposmem = 0;
+  }
+
+  UpdatePlayers(deltapos)
+  {
+    this.players = [];
+    this.deltaposmem = deltapos;
+    var i;
+    for(i=0;i<max_players;i++)
+      if(plr.players[i]!="0" && plr.players[i]!="1")
+      {
+        var splitted = plr.players[i].split(";");
+        var tpl = {id:0,x:0,y:0};
+        tpl.id = i;
+        tpl.x = func.parseFloatU(splitted[0]) - deltapos.x;
+        tpl.y = func.parseFloatU(splitted[1]) - deltapos.y;
+        var px = tpl.x;
+        var py = tpl.y;
+        if(func.parseIntU(splitted[5].split("&")[1]) % 100 != 1) //not invisible (must be %100)
+        if(px**2 + py**2 <= in_arena_range**2) //in arena range
+          this.players.push(tpl);
+      }
+  }
+  GetPlayers()
+  {
+    return this.players;
+  }
+  ShotCalculateIfNow(shooter,players,thys)
+  {
+    //If multiple shooter
+    if(thys.dataY[3-2]%shooter.frequency==0 && thys.dataY[3-2]!=0)
+      this.ShotCalculate(shooter,players,thys);
+  }
+  ShotCalculate(shooter,players,thys)
+  {
+    //Stupid shooter
+    if(shooter.stupid) {
+      this.ShotUsingShooter(shooter,0,thys);
+      return;
+    }
+
+    //Intelligent shooter
+    var min_deviation = 10000;
+    players.forEach( player => {
+      if(shooter.CanShoot(player.x,player.y)) {
+        var cand_deviation = shooter.BestDeviation(player.x,player.y);
+        if(Math.abs(cand_deviation) < Math.abs(min_deviation)) min_deviation = cand_deviation;
+      }
+    });
+    if(min_deviation!=10000) this.ShotUsingShooter(shooter,min_deviation,thys);
+  }
+  ShotUsingShooter(shooter,best_deviation,thys)
+  {
+    var deviation_angle = (Math.random()-0.5)*2*shooter.precision + best_deviation;
+    if(deviation_angle < -shooter.max_deviation) deviation_angle = -2*shooter.max_deviation - deviation_angle;
+    if(deviation_angle > shooter.max_deviation) deviation_angle = 2*shooter.max_deviation - deviation_angle;
+    this.ShotCooked(shooter.angle,shooter.bullet_type,thys,deviation_angle,shooter.radius);
+  }
+  ShotCooked(delta_angle_rad,btype,thys,deviation_angle,rad)
+  {
+    var lx = func.ScrdToFloat(thys.dataY[8-2]);
+    var ly = func.ScrdToFloat(thys.dataY[9-2]);
+    var angle = delta_angle_rad + func.ScrdToFloat(thys.dataY[10-2])*3.14159/180;
+    var pak = ["?",0];
+    if(btype==9 || btype==10) pak[0]=0.25; else pak[0]=0.35;
+    var efwing = func.RotatePoint(pak,angle+deviation_angle,false);
+    this.ShotRaw(rad*Math.cos(angle)+thys.deltapos.x+lx,rad*Math.sin(angle)+thys.deltapos.y+ly,efwing[0],efwing[1],btype,thys.identifier);
+  }
+  ShotRaw(px,py,vx,vy,type,bidf)
+  {
+      var tpl = Object.assign({},bulletTemplate);
+      tpl.start = Object.assign({},bulletTemplate.start);
+      tpl.vector = Object.assign({},bulletTemplate.vector);
+      tpl.pos = Object.assign({},bulletTemplate.pos);
+      tpl.damaged = [];
+      tpl.immune = [];
+
+      tpl.ID = func.randomInteger(0,1000000000);
+      tpl.owner = bidf;
+      tpl.type = type;
+      tpl.start.x = px;
+      tpl.start.y = py;
+      tpl.vector.x = vx;
+      tpl.vector.y = vy;
+      tpl.pos.x = tpl.start.x;
+      tpl.pos.y = tpl.start.y;
+
+      tpl.normal_damage = boss_damages[type] * func.parseFloatU(gameplay[32]);
+      if(type==3||type==13) tpl.is_unstable = true;
+      else tpl.is_unstable = false;
+
+      if(tpl.vector.x==0) tpl.vector.x = 0.00001;
+      if(tpl.vector.y==0) tpl.vector.y = 0.00001;
+
+      var arg = ("/ "+bidf+" "+type+" "+px+" "+py+" "+vx+" "+vy+" "+tpl.ID).replaceAll(".",",").split(" ");
+      arg.push("0");
+      spawnBullet(tpl,arg,bidf);
+  }
+  CleanBullets(bidf)
+  {
+    var i,lngt=bulletsT.length;
+    for(i=0;i<lngt;i++)
+      if(bulletsT[i].owner==bidf)
+        destroyBullet(i, ["", bulletsT[i].owner, bulletsT[i].ID, bulletsT[i].age], false);
+  }
+
+  //bossy functions
+  GetShootersList(type,thys)
+  {
+    var shooters = [];
+    if(true) //All bosses (temporary)
+    {
+        if(type==1) //Protector
+        {
+            shooters = [
+                new CShooter(11, 22.5,60,7.5, 6.5,thys,false, 15),
+                new CShooter(11, 45,60,7.5, 6.5,thys,false, 15),
+                new CShooter(11, 135,60,7.5, 6.5,thys,false, 15),
+                new CShooter(11, 157.5,60,7.5, 6.5,thys,false, 15),
+                new CShooter(11, 202.5,60,7.5, 6.5,thys,false, 15),
+                new CShooter(11, 225,60,7.5, 6.5,thys,false, 15),
+                new CShooter(11, 315,60,7.5, 6.5,thys,false, 15),
+                new CShooter(11, 337.5,60,7.5, 6.5,thys,false, 15),
+
+                new CShooter(4, 270,120,7.5, 10,thys,false, 300),
+                new CShooter(9, 0,0,0, 7.5,thys,true, 600),
+                new CShooter(9, 180,0,0, 7.5,thys,true, 600),
+            ];
+        }
+        if(type==2) //Adecodron
+        {
+            shooters = [
+                new CShooter(10, 0,0,0, 7.5,thys,true, 600),
+                new CShooter(10, 90,0,0, 7.5,thys,true, 600),
+                new CShooter(10, 180,0,0, 7.5,thys,true, 600),
+                new CShooter(10, 270,0,0, 7.5,thys,true, 600),
+
+                new CShooter(12, 45,60,7.5, 6.5,thys,false, 20),
+                new CShooter(12, 135,60,7.5, 6.5,thys,false, 20),
+                new CShooter(12, 225,60,7.5, 6.5,thys,false, 20),
+                new CShooter(12, 315,60,7.5, 6.5,thys,false, 20),
+                
+                new CShooter(6, 0,0,0, 6.5,thys,true, 600),
+                new CShooter(6, 20,0,0, 6.5,thys,true, 600),
+                new CShooter(6, 40,0,0, 6.5,thys,true, 600),
+                new CShooter(6, 60,0,0, 6.5,thys,true, 600),
+                new CShooter(6, 80,0,0, 6.5,thys,true, 600),
+                new CShooter(6, 100,0,0, 6.5,thys,true, 600),
+                new CShooter(6, 120,0,0, 6.5,thys,true, 600),
+                new CShooter(6, 140,0,0, 6.5,thys,true, 600),
+                new CShooter(6, 160,0,0, 6.5,thys,true, 600),
+                new CShooter(6, 180,0,0, 6.5,thys,true, 600),
+                new CShooter(6, 200,0,0, 6.5,thys,true, 600),
+                new CShooter(6, 220,0,0, 6.5,thys,true, 600),
+                new CShooter(6, 240,0,0, 6.5,thys,true, 600),
+                new CShooter(6, 260,0,0, 6.5,thys,true, 600),
+                new CShooter(6, 280,0,0, 6.5,thys,true, 600),
+                new CShooter(6, 300,0,0, 6.5,thys,true, 600),
+                new CShooter(6, 320,0,0, 6.5,thys,true, 600),
+                new CShooter(6, 340,0,0, 6.5,thys,true, 600),
+            ];
+        }
+        if(type==3) //Octogone
+        {
+            shooters = [
+                new CShooter(7, 0,60,10, 6.5,thys,false, 50),
+                new CShooter(7, 45,60,10, 6.5,thys,false, 50),
+                new CShooter(7, 90,60,10, 6.5,thys,false, 50),
+                new CShooter(7, 135,60,10, 6.5,thys,false, 50),
+                new CShooter(7, 180,60,10, 6.5,thys,false, 50),
+                new CShooter(7, 225,60,10, 6.5,thys,false, 50),
+                new CShooter(7, 270,60,10, 6.5,thys,false, 50),
+                new CShooter(7, 315,60,10, 6.5,thys,false, 50),
+
+                new CShooter(8, 90,60,10, 8.5,thys,false, 500),
+                new CShooter(8, 210,60,10, 8.5,thys,false, 500),
+                new CShooter(8, 330,60,10, 8.5,thys,false, 500),
+            ];
+        }
+        if(type==4) //Starandus
+        {
+            shooters = [
+                new CShooter(5, 0,60,60, 6.5,thys,true, 25),
+                new CShooter(5, 45,60,60, 6.5,thys,true, 21),
+                new CShooter(5, 90,60,60, 6.5,thys,true, 26),
+                new CShooter(5, 135,60,60, 6.5,thys,true, 28),
+                new CShooter(5, 180,60,60, 6.5,thys,true, 24),
+                new CShooter(5, 225,60,60, 6.5,thys,true, 23),
+                new CShooter(5, 270,60,60, 6.5,thys,true, 27),
+                new CShooter(5, 315,60,60, 6.5,thys,true, 22),
+            ];
+        }
+        if(type==6) //Degenerator
+        {
+            shooters = [
+                new CShooter(13, 22.5,60,10, 6.5,thys,false, 35),
+                new CShooter(12, 45,60,7.5, 6.5,thys,false, 20),
+                new CShooter(12, 135,60,7.5, 6.5,thys,false, 20),
+                new CShooter(13, 157.5,60,10, 6.5,thys,false, 35),
+                new CShooter(13, 202.5,60,10, 6.5,thys,false, 35),
+                new CShooter(12, 225,60,7.5, 6.5,thys,false, 20),
+                new CShooter(12, 315,60,7.5, 6.5,thys,false, 20),
+                new CShooter(13, 337.5,60,10, 6.5,thys,false, 35),
+            ];
+        }
+    }
+    return shooters;
+  }
+}
+let visionInfo = new CInfo(plr,bulletsT);
 
 //Websocket functions
 let connectionOptions = {
@@ -183,7 +483,7 @@ function sendTo(ws,data) {
 //Funny functions
 function getRandomFunnyText()
 {
-  var rfn = randomInteger(0,19);
+  var rfn = func.randomInteger(0,19);
   switch(rfn)
   {
     case 0: return "Eating a dinner..."; case 1: return "Breaking bones...";
@@ -214,9 +514,6 @@ Array.prototype.remove = function (ind) {
   this.splice(ind, 1);
   return this;
 };
-function randomInteger(min, max) {
-  return Math.round(Math.random() * (max - min)) + parseInt(min);
-}
 
 //File functions
 function readF(nate) {
@@ -236,8 +533,7 @@ function writeF(nate, text) {
     pathCurrent += foldT[i] + "/";
     if (!existsF(pathCurrent)) fs.mkdirSync(pathCurrent);
   }
-  /*if(existsF(nate)) fs.writeFileSync(nate, String(text), {flag:"rs+"});*/
-  /*else*/ fs.writeFileSync(nate, String(text));
+  fs.writeFileSync(nate, String(text));
 }
 function removeF(nate) {
   fs.unlinkSync(nate);
@@ -257,12 +553,12 @@ function fileReadablePlayer(elemT) {
   if (elem3.length < 5) return false;
 
   var i;
-  for (i = 0; i < 6; i++) if (isNaN(parseFloatP(elem0[i]))) return false;
-  if (isNaN(parseIntP(elem0[6]))) return false;
-  if (isNaN(parseFloatP(elem0[7]))) return false;
-  for (i = 0; i < 18; i++) if (isNaN(parseIntP(elem1[i]))) return false;
-  for (i = 0; i < 42; i++) if (isNaN(parseIntP(elem2[i]))) return false;
-  for (i = 0; i < 5; i++) if (isNaN(parseIntP(elem3[i]))) return false;
+  for (i = 0; i < 6; i++) if (isNaN(func.parseFloatP(elem0[i]))) return false;
+  if (isNaN(func.parseIntP(elem0[6]))) return false;
+  if (isNaN(func.parseFloatP(elem0[7]))) return false;
+  for (i = 0; i < 18; i++) if (isNaN(func.parseIntP(elem1[i]))) return false;
+  for (i = 0; i < 42; i++) if (isNaN(func.parseIntP(elem2[i]))) return false;
+  for (i = 0; i < 5; i++) if (isNaN(func.parseIntP(elem3[i]))) return false;
 
   return true;
 }
@@ -347,8 +643,8 @@ function readPlayer(n) {
 function ulamToXY(ulam) {
   var sqrt = Math.floor(Math.sqrt(ulam));
   if (sqrt % 2 == 0) sqrt--;
-  var x = sqrt / 2 + 0.5,
-    y = -sqrt / 2 - 0.5;
+  var x = sqrt / 2 + 0.5;
+  var y = -sqrt / 2 - 0.5;
   var pot = sqrt ** 2;
   var delta = ulam - pot;
   var cwr = Math.floor(delta / (sqrt + 1));
@@ -367,13 +663,10 @@ function ulamToXY(ulam) {
   return [x, y];
 }
 function chunkRead(ind) {
-  var i,
-    j,
-    eff = seed + "\r\n";
-  if (existsF("ServerUniverse/Asteroids/Generated_" + ind + ".se3")) {
-    var datT = readF(
-      "ServerUniverse/Asteroids/Generated_" + ind + ".se3"
-    ).split("\r\n");
+  var i, j, eff = seed + "\r\n";
+  if (existsF("ServerUniverse/Asteroids/Generated_" + ind + ".se3"))
+  {
+    var datT = readF("ServerUniverse/Asteroids/Generated_" + ind + ".se3").split("\r\n");
     var pom;
 
     try {
@@ -382,21 +675,19 @@ function chunkRead(ind) {
           var datM = datT[i].split(";");
           var lnt = datM.length;
           if (lnt > 61) lnt = 61;
-          for (j = 0; j < lnt; j++) if (datM[j] != "") pom = parseIntE(datM[j]);
+          for (j = 0; j < lnt; j++) if (datM[j] != "") pom = func.parseIntE(datM[j]);
           for (j = lnt; j < 61; j++) datT[i] += ";";
           eff += datT[i] + "\r\n";
         }
         return eff;
-      } else nev++;
+      } else throw "error";
     } catch {
       console.log(
         "Asteroid file [" + ind + "] is invalid. Generating new data..."
       );
     }
   }
-  for (i = 0; i < 100; i++)
-    eff +=
-      ";;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;" + "\r\n";
+  for (i = 0; i < 100; i++) eff += ";;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;" + "\r\n";
   return eff;
 }
 function removeEnds(str) {
@@ -457,40 +748,6 @@ function asteroidIndex(ulam) {
   chunk_data.push(lines);
 
   return [lngt, rSS + 1];
-}
-
-//ParseE functions
-function parseFloatE(str) {
-  str = parseFloatP(str+"");
-  if (!isNaN(str)) return str;
-  else return not_existing_variable;
-}
-function parseIntE(str) {
-  str = parseIntP(str);
-  if (!isNaN(str)) return str;
-  else return not_existing_variable;
-}
-function parseIntP(str) {
-  var i,
-    lngt = str.length;
-  for (i = 0; i < lngt; i++)
-    if (
-      !["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "-"].includes(str[i])
-    )
-      return parseInt("not_number");
-  return parseInt(str);
-}
-function parseFloatP(str) {
-  var i,
-    lngt = str.length;
-  for (i = 0; i < lngt; i++)
-    if (
-      !["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ",", ".", "-", "e", "E"].includes(
-        str[i]
-      )
-    )
-      return parseInt("not_number");
-  return parseFloat(str.replaceAll(",", "."));
 }
 
 //Data functions
@@ -579,23 +836,23 @@ setInterval(function () { // <interval #1>
 function getProtLevelAdd(art)
 {
 	if(art!=1) return 0;
-	else return parseFloatE(gameplay[16]);
+	else return func.parseFloatU(gameplay[16]);
 }
 function getProtRegenMultiplier(art)
 {
 	if(art!=1) return 1;
-	else return parseFloatE(gameplay[17]);
+	else return func.parseFloatU(gameplay[17]);
 }
 
 function DamageFLOAT(pid,dmg)
 {
-  dmg = parseFloatE(dmg);
+  dmg = func.parseFloatU(dmg);
   if(dmg>0 && plr.players[pid].split(";").length!=1 && (plr.livID[pid]==plr.cl_livID[pid] && plr.immID[pid]==plr.cl_immID[pid]) && plr.connectionTime[pid]>=50)
   {
     var artid = plr.backpack[pid].split(";")[30] - 41;
     if(plr.backpack[pid].split(";")[31]=="0") artid = -41;
-    if(parseFloatE(plr.players[pid].split(";")[5].split("&")[1])%100==2) return;
-    var potHHH = parseFloatE(plr.upgrades[pid].split(";")[0]) + getProtLevelAdd(artid) + parseFloatE(gameplay[26]);
+    if(func.parseFloatU(plr.players[pid].split(";")[5].split("&")[1])%25==2) return;
+    var potHHH = func.parseFloatU(plr.upgrades[pid].split(";")[0]) + getProtLevelAdd(artid) + func.parseFloatU(gameplay[26]);
 		if(potHHH<-50) potHHH = -50; if(potHHH>56.397) potHHH = 56.397;
 		dmg=0.02*dmg/(Math.ceil(50*Math.pow(health_base,potHHH))/50);
 		CookedDamage(pid,dmg);
@@ -618,14 +875,15 @@ function DamageFLOAT(pid,dmg)
       immortal(pid);
       plr.players[pid] = Censure(plr.players[pid],pid,plr.livID[pid]);
     }
+    return info;
   }
 }
 function CookedDamage(pid,dmg)
 {
-  dmg = parseFloatE(dmg);
+  dmg = func.parseFloatU(dmg);
   plr.sHealth[pid] -= dmg;
   if(Math.round(plr.sHealth[pid]*10000) == 0) plr.sHealth[pid] = 0;
-  plr.sRegTimer[pid] = Math.floor(50*parseFloatE(gameplay[4]));
+  plr.sRegTimer[pid] = Math.floor(50*func.parseFloatU(gameplay[4]));
 
   if(plr.players[pid]=="0" || plr.players[pid]=="1") return;
 
@@ -634,106 +892,189 @@ function CookedDamage(pid,dmg)
   sendToAllClients("/RetEmitParticles "+pid+" 2 "+xx+" "+yy+" X X");
   sendToAllClients("/RetInvisibilityPulse "+pid+" wait X X");
 }
-function getBulletDamage(type,owner,pid)
+function getBulletDamage(type,owner,pid,bll)
 {
-  var artid=-41;
-  if(pid!=-1 && pid!=-2)
-  {
+  var artid;
+  if(pid==-2) { //unstable boss
+    artid = 6;
+  }
+  else if(pid==-1) { //normal boss
+    artid = -41;
+  }
+  else { //player
+    if(bll.immune.includes(pid+"")) return 0;
     artid = plr.backpack[pid].split(";")[30] - 41;
     if(plr.backpack[pid].split(";")[31]==0) artid = -41;
   }
-  else if(pid==-1) artid=-41;
-  else if(pid==-2) artid=6;
-
-  if(artid==6 && type==3) return 0;
-
-  var dmg = 0;
-  if(type==1) dmg = parseFloatE(gameplay[3]);
-  if(type==2) dmg = parseFloatE(gameplay[27]);
-  if(type==3) dmg = parseFloatE(gameplay[28]);
-
-  if(type!=3 && plr.players[owner]!="0")
-    dmg *= Math.pow(1.08,parseIntE(plr.upgrades[owner].split(";")[3]));
-
-  return dmg;
+  if(artid!=6 || !bll.is_unstable) return bll.normal_damage;
+  else return 0;
 }
 
 //HUB INTERVAL <interval #0>
 var date_before = Date.now();
 var date_start = Date.now();
+var time_loan = 0;
 setInterval(function () { // <interval #2>
   while(Date.now() > date_before)
   {
-    date_before++;
-    if((date_before-date_start) % 20 == 0) //precisely 50 times per second
+    date_before+=20;
+    if((date_before-date_start) % 1000 == 0) //precisely 1 times per second (never affected)
     {
-      //Bullet movement && check player collision
-      var i, j, lngt = bulletsT.length;
+      updateHourHeader();
+      setTerminalTitle("SE3 server | " + serverVersion +
+        " | Download: " + size_download/1000 + "KB/s" +
+        " | Upload: " + size_upload/1000 + "KB/s" +
+        " | Packet frequency: " + size_updates + "/s" +
+        " | TPS: " + size_tps
+      );
+      size_download = 0;
+      size_upload = 0;
+      size_updates = 0;
+      size_tps = 0;
+    }
+
+    //LAG PREVENTING
+    if(time_loan>=15) {
+      time_loan-=15;
+      continue;
+    }
+
+    var v1_date_now = Date.now();
+
+    //FRAME UPDATE (50TPS by default):
+
+    //lagger
+    //while(Date.now()<v1_date_now+40) { console.log("lagger enabled"); }
+
+      //Bullet movement && check collision
+      var i, j, lngt=bulletsT.length, slngt=scrs.length;
+      for(j=0;j<slngt;j++)
+      {
+        var q,qlngt=scrs[j].bulCols.length;
+        for(q=0;q<qlngt;q++)
+        {
+          scrs[j].bulCols[q].SetShapeCollider(0,0,0);
+          for(i=0;i<lngt;i++)
+          {
+            if(bulletsT[i].age != bulletsT[i].max_age && bulletsT[i].owner<0)
+              if(scrs[j].bulCols[q].IsSphereColliding(bulletsT[i].pos.x + bulletsT[i].vector.x, bulletsT[i].pos.y + bulletsT[i].vector.y, other_bullets_colliders[bulletsT[i].type]))
+                  destroyBullet(i, ["", bulletsT[i].owner, bulletsT[i].ID, bulletsT[i].age], true);
+          }
+        }
+      }
       for(i=0;i<lngt;i++)
       {
-        var start_xa = bulletsT[i].pos.x;
-        var start_ya = bulletsT[i].pos.y;
+        if(bulletsT[i].steerPtr!=-1)
+        {
+          //Seek decisions
+          var nc="0";
+          for(j=0;j<slngt;j++) {
+            if(scrs[j].behaviour.identifier==bulletsT[i].boss_owner) break;
+          }
+          if(j!=slngt)
+          {
+            var deltapos = {x:0,y:0};
+            deltapos.x = scrs[j].posCX;
+            deltapos.y = scrs[j].posCY;
+            visionInfo.UpdatePlayers(deltapos);
+
+            var player_candidates = visionInfo.GetPlayers();
+            var nbx = bulletsT[i].pos.x - deltapos.x;
+            var nby = bulletsT[i].pos.y - deltapos.y;
+            var cl,cnajm,cnajwart,curwart,clngt = player_candidates.length;
+            if(clngt>0)
+            {
+              cnajm = 0;
+              cnajwart = (nbx-player_candidates[0].x)**2 + (nby-player_candidates[0].y)**2;
+              for(cl=1;cl<clngt;cl++) {
+                curwart = (nbx-player_candidates[cl].x)**2 + (nby-player_candidates[cl].y)**2;
+                if(curwart < cnajwart)
+                {
+                  cnajm = cl;
+                  cnajwart = curwart;
+                }
+              }
+
+              //Choosing
+              var dif_x = nbx - player_candidates[cnajm].x;
+              var dif_y = nby - player_candidates[cnajm].y;
+              var angle = func.AngleBetweenVectorAndOX(bulletsT[i].vector.x,bulletsT[i].vector.y) - func.AngleBetweenVectorAndOX(dif_x,dif_y);
+              while(angle<-180) angle+=360;
+              while(angle>180) angle-=360;
+              if(angle>0) nc = "L";
+              else nc = "P";
+            }
+          }
+          steer_steerData[bulletsT[i].steerPtr]+=nc;
+          steer_steerSend[bulletsT[i].steerPtr]+=nc;
+
+          //Seek update
+          var c = steer_tryGet(bulletsT[i].steerPtr,bulletsT[i].age);
+          if(c!='0')
+          {
+              var get, pak = [bulletsT[i].vector.x,bulletsT[i].vector.y];
+              if(c=='L') get = func.RotatePoint(pak,2.14,true);
+              if(c=='P') get = func.RotatePoint(pak,-2.14,true);
+              bulletsT[i].vector.x = get[0];
+              bulletsT[i].vector.y = get[1];
+          }
+        }
+
         var xv = bulletsT[i].vector.x;
         var yv = bulletsT[i].vector.y;
 
-        var xn = (xv/Math.sqrt(xv*xv + yv*yv))
-        var yn = (yv/Math.sqrt(xv*xv + yv*yv))
+        var xa = bulletsT[i].pos.x;
+        var ya = bulletsT[i].pos.y;
+        var xb = xa + bulletsT[i].vector.x;
+        var yb = ya + bulletsT[i].vector.y;
+        func.CollisionLinearBulletSet(xa,ya,xb,yb,other_bullets_colliders[bulletsT[i].type]);
 
-        var xa = start_xa - xn;
-        var ya = start_ya - yn;
-        var xb = start_xa + (xv) + xn;
-        var yb = start_ya + (yv) + yn;
-
-        var aab = (yb-ya)/(xb-xa);
-        var adc = -1/(aab);
-
-        if(pvp)
+        if(pvp || bulletsT[i].owner<0)
         for(j=0;j<max_players;j++)
         {
+          // player/boss -> player
           if(plr.players[j]!="0" && plr.players[j]!="1" && bulletsT[i].owner!=j)
           {
             var plas = plr.players[j].split(";");
-            var xc = parseFloatE(plas[0]);
-            var yc = parseFloatE(plas[1]);
-            var xd = (yc-ya + (aab*xa)-(adc*xc))/(aab-adc);
-            var yd = aab*(xd-xa) + ya;
-            if((xd>xa && xd>xb) || (xd<xa && xd<xb)) continue;
-            if(((xd-xc)**2)+((yd-yc)**2) <= ((1)**2))
+            var xc = func.parseFloatU(plas[0]);
+            var yc = func.parseFloatU(plas[1]);
+            if(func.CollisionLinearCheck(xc,yc,0.92))
             {
-              if(bulletsT[i].type!=3) {
-                DamageFLOAT(j, getBulletDamage(bulletsT[i].type, bulletsT[i].owner, j) );
+              if(bullet_air_consistence[bulletsT[i].type]==0) {
+                if( DamageFLOAT(j, getBulletDamage(bulletsT[i].type, bulletsT[i].owner, j, bulletsT[i]) ) != "K")
+                  sendTo(se3_ws[j],"/RetDamageUsing "+bulletsT[i].type+" X "+plr.livID[j]);
                 destroyBullet(i, ["", bulletsT[i].owner, bulletsT[i].ID, bulletsT[i].age], false);
                 break;
               }
               else if(!bulletsT[i].damaged.includes(j)) {
-                DamageFLOAT(j, getBulletDamage(bulletsT[i].type, bulletsT[i].owner, j) );
+                if( DamageFLOAT(j, getBulletDamage(bulletsT[i].type, bulletsT[i].owner, j, bulletsT[i]) ) != "K")
+                  sendTo(se3_ws[j],"/RetDamageUsing "+bulletsT[i].type+" X "+plr.livID[j]);
                 bulletsT[i].damaged.push(j);
               }
             }
           }
         }
 
-        var rr = 7.58;
-        xb = start_xa + (xv);
-        yb = start_ya + (yv);
         var lngts = scrs.length;
+        if(bulletsT[i].owner>=0)
         for(j=0;j<lngts;j++)
         {
+          // player -> boss
           var l = scrs[j].bID;
-          if(scrs[j].additionalData[2-2]=="2")
+          if(scrs[j].dataY[2-2]==2)
           {
-            var xc = scrs[j].posCX + ScrdToFloat(scrs[j].additionalData[8-2]);
-            var yc = scrs[j].posCY + ScrdToFloat(scrs[j].additionalData[9-2]);
-            if(((xb-xc)**2)+((yb-yc)**2) <= ((rr)**2))
+            var xc = scrs[j].posCX + func.ScrdToFloat(scrs[j].dataY[8-2]);
+            var yc = scrs[j].posCY + func.ScrdToFloat(scrs[j].dataY[9-2]);
+            if(func.CollisionLinearCheck(xc,yc,7.5))
             {
               if(bulletsT[i].type!=3) {
-                DamageBoss(j, getBulletDamage(bulletsT[i].type, bulletsT[i].owner, -1) );
+                DamageBoss(j, getBulletDamage(bulletsT[i].type, bulletsT[i].owner, -1, bulletsT[i]) );
                 destroyBullet(i, ["", bulletsT[i].owner, bulletsT[i].ID, bulletsT[i].age], true);
                 break;
               }
               else if(!bulletsT[i].damaged.includes(-l)) {
-                if(scrs[j].type!=6) DamageBoss(j, getBulletDamage(bulletsT[i].type, bulletsT[i].owner, -1) );
-                else DamageBoss(j, getBulletDamage(bulletsT[i].type, bulletsT[i].owner, -2) );
+                if(scrs[j].type!=6) DamageBoss(j, getBulletDamage(bulletsT[i].type, bulletsT[i].owner, -1, bulletsT[i]) );
+                else DamageBoss(j, getBulletDamage(bulletsT[i].type, bulletsT[i].owner, -2, bulletsT[i]) );
                 bulletsT[i].damaged.push(-l);
                 destroyBullet(i, ["", bulletsT[i].owner, bulletsT[i].ID, bulletsT[i].age], true);
                 break;
@@ -745,6 +1086,7 @@ setInterval(function () { // <interval #2>
         bulletsT[i].age++;
         if(bulletsT[i].age>=bulletsT[i].max_age)
         {
+          steer_removeSeekPointer(bulletsT[i].steerPtr);
           bulletsT.remove(i);
           lngt--; i--; continue;
         }
@@ -765,9 +1107,9 @@ setInterval(function () { // <interval #2>
 
           if(plr.sHealth[i]<1 && plr.sRegTimer[i]==0 && (plr.livID[i]==plr.cl_livID[i] && plr.immID[i]==plr.cl_immID[i]))
 		      {
-			      var potHH = parseFloatE(plr.upgrades[i].split("")[0]) + getProtLevelAdd(artid) + parseFloatE(gameplay[26]);
+			      var potHH = func.parseFloatU(plr.upgrades[i].split(";")[0]) + getProtLevelAdd(artid) + func.parseFloatU(gameplay[26]);
 			      if(potHH<-50) potHH = -50; if(potHH>56.397) potHH = 56.397;
-            var true_add = unit * getProtRegenMultiplier(artid) * parseFloatE(gameplay[5]) / (Math.ceil(50*Math.pow(health_base,potHH))/50);
+            var true_add = unit * getProtRegenMultiplier(artid) * func.parseFloatU(gameplay[5]) / (Math.ceil(50*Math.pow(health_base,potHH))/50);
 			      if(true_add>0) plr.sHealth[i] += true_add;
 		      }
           if(plr.sHealth[i]>1) plr.sHealth[i]=1;
@@ -787,31 +1129,35 @@ setInterval(function () { // <interval #2>
 
       //[Scrs: Multiplayer boss mechanics update]
       lngt = scrs.length;
-      for(i=0;i<lngt;i++) {
-        var sta = scrs[i].additionalData[2-2];
-        scrs[i].additionalData[3-2] = (parseInt(scrs[i].additionalData[3-2])+1)+"";
-        if(sta=="2") scrs[i].additionalData[4-2] = (parseInt(scrs[i].additionalData[4-2])-1)+"";
-        if((sta=="1" || sta=="3" || sta=="4") && parseInt(scrs[i].additionalData[3-2])>=50)
+      for(i=0;i<lngt;i++)
+      {
+        var sta = scrs[i].dataY[2-2]+"";
+        scrs[i].dataY[3-2]++;
+        if(sta=="2")
         {
-          if(sta=="1") scrs[i].additionalData[2-2] = "2";
-          else if(sta=="3" || sta=="4") scrs[i].additionalData[2-2] = "0";
+          scrs[i].dataY[4-2]--;
+          var deltapos = {x:0,y:0};
+          deltapos.x = scrs[i].posCX;
+          deltapos.y = scrs[i].posCY;
+          visionInfo.UpdatePlayers(deltapos);
+          scrs[i].behaviour.FixedUpdate();
+        }
+        if((sta=="1" || sta=="3" || sta=="4") && scrs[i].dataY[3-2]>=50)
+        {
+          if(sta=="1") scrs[i].dataY[2-2] = 2;
+          else if(sta=="3" || sta=="4") scrs[i].dataY[2-2] = 0;
           resetScr(i);
         }
-        else if(sta=="2" && parseInt(scrs[i].additionalData[4-2])<=0)
+        else if(sta=="2" && scrs[i].dataY[4-2]<=0)
         {
-          scrs[i].additionalData[2-2] = "3";
+          scrs[i].dataY[2-2] = 3;
           resetScr(i);
         }
-        else if(sta=="2" && parseInt(scrs[i].additionalData[6-2])<=0)
+        else if(sta=="2" && scrs[i].dataY[6-2]<=0)
         {
-          scrs[i].additionalData[2-2] = "4";
+          scrs[i].dataY[2-2] = 4;
           resetScr(i);
         }
-        /*if(sta=="2") boss_behaviour.BehaviourUpdate50fps(
-
-          REFERENCE DATA HERE
-
-        );*/
       }
 
       //Connection time
@@ -820,11 +1166,7 @@ setInterval(function () { // <interval #2>
         if(plr.connectionTime[i]>=0)
           plr.connectionTime[i]++;
       }
-    }
-    if((date_before-date_start) % 50 == 0) //precisely 20 times per second
-    {
-      //NOTHING SO IMPORTANT
-    }
+
     if((date_before-date_start) % 100 == 0) //precisely 10 times per second
     {
       //[Grow]
@@ -836,11 +1178,11 @@ setInterval(function () { // <interval #2>
          var ulam = growT[i].split("g")[0];
           var place = growT[i].split("g")[1];
          var det = asteroidIndex(ulam);
-          var tume = chunk_data[det[0]][det[1]][21 + 2 * parseInt(place)];
+          var tume = chunk_data[det[0]][det[1]][21 + 2 * func.parseIntU(place)];
           tume -= 5;
 
          if (tume > 0) {
-            chunk_data[det[0]][det[1]][21 + 2 * parseInt(place)] = tume;
+            chunk_data[det[0]][det[1]][21 + 2 * func.parseIntU(place)] = tume;
           } else {
            serverGrow(ulam, place);
            growT.remove(i);
@@ -899,25 +1241,26 @@ setInterval(function () { // <interval #2>
           lngt--; i--;
           continue;
         }
-        if(scrs[i].timeToLose<=0 && scrs[i].additionalData[2-2]=="2")
+        if(scrs[i].timeToLose<=0 && scrs[i].dataY[2-2]==2)
         {
-          scrs[i].additionalData[2-2] = "3";
+          scrs[i].dataY[2-2] = 3;
           resetScr(i);
         }
       }
+
+      //Steer cooldown
+      for(i=0;i<1024;i++) {
+        if(steer_cooldown[i]==5) steer_bulletID[i]=-1;
+        if(steer_cooldown[i]>0) steer_cooldown[i]-=5;
+      }
     }
-    if((date_before-date_start) % 1000 == 0) //precisely 1 times per second
-    {
-      updateHourHeader();
-      setTerminalTitle("SE3 server | " + serverVersion +
-        " | Download: " + size_download/1000 + "KB/s" +
-        " | Upload: " + size_upload/1000 + "KB/s" +
-        " | Refresh: " + size_updates + "/s"
-      );
-      size_download = 0;
-      size_upload = 0;
-      size_updates = 0;
-    }
+
+    var v2_date_now = Date.now();
+    var date_dif = v2_date_now - v1_date_now;
+    if(date_dif>15) time_loan += date_dif-15;
+
+    current_tick++;
+    size_tps++;
   }
 }, 5);
 function setTerminalTitle(title)
@@ -940,32 +1283,24 @@ function ToTwo(n) {
 }
 function getTimeSize(n)
 {
-  if(n=="0") return "9000";
-  if(n=="1") return "10500";
-  if(n=="2") return "12000";
-  return "3000";
+  return 9000;
 }
 function getBossHealth(n,typ)
 {
-  if(typ==0)
-  {
-    if(n=="0") return "160000";
-    if(n=="1") return "180000";
-    if(n=="2") return "200000";
-  }
-  return "40000";
+  return 100000;
 }
 function resetScr(i)
 {
-  var mem6 = scrs[i].additionalData[6-2];
-  var mem7 = scrs[i].additionalData[7-2];
-  var mem8 = scrs[i].additionalData[8-2];
-  var mem9 = scrs[i].additionalData[9-2];
-  var mem10 = scrs[i].additionalData[10-2];
+  var mem6 = scrs[i].dataY[6-2];
+  var mem7 = scrs[i].dataY[7-2];
+  var mem8 = scrs[i].dataY[8-2];
+  var mem9 = scrs[i].dataY[9-2];
+  var mem10 = scrs[i].dataY[10-2];
 
   var j;
-  for(j=3;j<=20;j++) scrs[i].additionalData[j-2] = "0";
-  var sta = scrs[i].additionalData[2-2];
+  var sta = scrs[i].dataY[2-2]+"";
+  if(sta=="3"||sta=="4") scrs[i].behaviour.End();
+  for(j=3;j<=60;j++) scrs[i].dataY[j-2] = 0;
 
   scrs[i].timeToLose = 1000;
 
@@ -975,59 +1310,54 @@ function resetScr(i)
   }
   else if(sta=="1")
   {
-    scrs[i].additionalData[5-2] = getTimeSize(scrs[i].generalData[1]); //Max time
-    scrs[i].additionalData[4-2] = scrs[i].additionalData[5-2]; //Time left
-    scrs[i].additionalData[7-2] = getBossHealth(scrs[i].generalData[1],scrs[i].type); //Max health
-    scrs[i].additionalData[6-2] = scrs[i].additionalData[7-2]; //Health left
+    scrs[i].dataY[5-2] = getTimeSize(scrs[i].dataX[1]); //Max time
+    scrs[i].dataY[4-2] = scrs[i].dataY[5-2]; //Time left
+    scrs[i].dataY[7-2] = getBossHealth(scrs[i].dataX[1],scrs[i].type); //Max health
+    scrs[i].dataY[6-2] = scrs[i].dataY[7-2]; //Health left
   }
   else if(sta=="2")
   {
-    scrs[i].additionalData[5-2] = getTimeSize(scrs[i].generalData[1]); //Max time
-    scrs[i].additionalData[4-2] = scrs[i].additionalData[5-2]; //Time left
-    scrs[i].additionalData[7-2] = mem7; //Max health
-    scrs[i].additionalData[6-2] = scrs[i].additionalData[7-2]; //Health left
+    scrs[i].dataY[5-2] = getTimeSize(scrs[i].dataX[1]); //Max time
+    scrs[i].dataY[4-2] = scrs[i].dataY[5-2]; //Time left
+    scrs[i].dataY[7-2] = mem7; //Max health
+    scrs[i].dataY[6-2] = scrs[i].dataY[7-2]; //Health left
+    scrs[i].behaviour.Start();
   }
   else if(sta=="3")
   {
-    scrs[i].additionalData[7-2] = mem7; //Max health
-    scrs[i].additionalData[6-2] = mem6; //Health left
-    scrs[i].additionalData[8-2] = mem8; scrs[i].additionalData[9-2] = mem9; scrs[i].additionalData[10-2] = mem10; //Position & Rotation
+    scrs[i].dataY[7-2] = mem7; //Max health
+    scrs[i].dataY[6-2] = mem6; //Health left
+    scrs[i].dataY[8-2] = mem8; scrs[i].dataY[9-2] = mem9; scrs[i].dataY[10-2] = mem10; //Position & Rotation
   }
   else if(sta=="4")
   {
-    scrs[i].additionalData[7-2] = mem7; //Max health
-    scrs[i].additionalData[8-2] = mem8; scrs[i].additionalData[9-2] = mem9; scrs[i].additionalData[10-2] = mem10; //Position & Rotation
+    scrs[i].dataY[7-2] = mem7; //Max health
+    scrs[i].dataY[8-2] = mem8; scrs[i].dataY[9-2] = mem9; scrs[i].dataY[10-2] = mem10; //Position & Rotation
 
     //Add 1 to wave number
-    scrs[i].generalData[1] = (parseInt(scrs[i].generalData[1])+1)+"";
+    scrs[i].dataX[1]++;
     var det = asteroidIndex(scrs[i].bID);
-    chunk_data[det[0]][det[1]][1] = scrs[i].generalData[1];
+    chunk_data[det[0]][det[1]][1] = scrs[i].dataX[1]+"";
     sendToAllClients(
       "/RetEmitParticles -1 10 "+
-      ((ScrdToFloat(mem8)+scrs[i].posCX)+"").replaceAll(".",",")+" "+
-      ((ScrdToFloat(mem9)+scrs[i].posCY)+"").replaceAll(".",",")+
+      ((func.ScrdToFloat(mem8)+scrs[i].posCX)+"").replaceAll(".",",")+" "+
+      ((func.ScrdToFloat(mem9)+scrs[i].posCY)+"").replaceAll(".",",")+
       " X X"
     );
   }
 }
 function DamageBoss(i,dmg)
 {
-  if(scrs[i].additionalData[2-2]!="2") return;
-  var actualHealth = parseInt(scrs[i].additionalData[6-2])/100;
+  if(scrs[i].dataY[2-2]!=2) return;
+  var actualHealth = scrs[i].dataY[6-2]/100;
   actualHealth -= dmg;
-  scrs[i].additionalData[6-2] = Math.floor(actualHealth*100)+"";
+  scrs[i].dataY[6-2] = Math.floor(actualHealth*100);
   if(dmg!=0) sendToAllClients(
     "/RetEmitParticles -1 9 "+
-    ((ScrdToFloat(scrs[i].additionalData[8-2])+scrs[i].posCX)+"").replaceAll(".",",")+" "+
-    ((ScrdToFloat(scrs[i].additionalData[9-2])+scrs[i].posCY)+"").replaceAll(".",",")+
+    ((func.ScrdToFloat(scrs[i].dataY[8-2])+scrs[i].posCX)+"").replaceAll(".",",")+" "+
+    ((func.ScrdToFloat(scrs[i].dataY[9-2])+scrs[i].posCY)+"").replaceAll(".",",")+
     " X X"
   );
-}
-function FloatToScrd(src) {
-  return Math.floor(src*100000)+"";
-}
-function ScrdToFloat(src) {
-  return parseInt(src)/100000;
 }
 
 //RetPlayerUpdate (25 times per second by default)
@@ -1046,22 +1376,34 @@ setInterval(function () {  // <interval #2>
 
   //RPU - Dynamic data
   eff = "/RPU " + max_players + " ";
-  eff += GetRPU(plr.players,lngt);
+  eff += GetRPU(plr.players,lngt) + " ";
+  eff += current_tick;
   eff += " X X"
   sendToAllClients(eff);
 
+  //BRP - Bullet Rotation Packet
+  var gbrp = GetBRP();
+  eff = "/BRP " + gbrp + " X X";
+  if(gbrp!="") sendToAllClients(eff);
+
+  var i,j;
   for(i=0;i<scrs.length;i++)
   {
-    var lc3 = scrs[i].generalData.join(";") + ";" + scrs[i].additionalData.join(";");
+    var lc3 = scrs[i].dataX.join(";") + ";" + scrs[i].dataY.join(";");
+    var lc4 = GetRSD(lc3);
     
     //RSD - Boss data
-    sendToAllClients(
-        "/RSD " +
-        scrs[i].bID +
-        " " +
-        lc3 +
-        " 1024 X X"
-    );
+    for(j=0;j<max_players;j++)
+    {
+      if(plr.bossMemories[j].includes(scrs[i].bID+""))
+        sendToAllClients(
+          "/RSD " +
+          scrs[i].bID +
+          " " +
+          lc4 +
+          " 1024 X X"
+      );
+    }
   }
 
   for(i=0;i<max_players;i++)
@@ -1118,14 +1460,23 @@ function kick(i) {
   plr.backpack[i] = "0";
   plr.inventory[i] = "0";
   plr.pushInventory[i] = "0";
+  plr.impulsed[i] = [];
+  plr.bossMemories[i] = [];
 }
 
-//Server health functions
-
-
 //Bullet functions
-function spawnBullet(tpl,arg)
+function spawnBullet(tpl,arg,bow)
 {
+  if(tpl.type==9 || tpl.type==10)
+  {
+    tpl.steerPtr = steer_createSeekPointer(tpl.ID);
+    if(tpl.steerPtr!=-1)
+    {
+      tpl.boss_owner = bow;
+      tpl.max_age = 300;
+      sendToAllClients("/RetSeekData "+tpl.steerPtr+" "+tpl.ID+" X X");
+    }
+  }
   bulletsT.push(tpl);
   sendToAllClients(
     "/RetNewBulletSend " +
@@ -1136,12 +1487,13 @@ function spawnBullet(tpl,arg)
       arg[5]+" " +
       arg[6]+" " +
       arg[7]+" " +
+      arg[8]+" " +
       " X X"
   );
 }
 function destroyBullet(n,arg,noise)
 {
-  bulletsT[n].max_age = parseIntP(arg[3]);
+  bulletsT[n].max_age = func.parseIntU(arg[3]);
   sendToAllClients(
     "/RetNewBulletDestroy "+
     arg[1]+" "+
@@ -1150,6 +1502,47 @@ function destroyBullet(n,arg,noise)
     noise +" "+
     " X X"
   );
+}
+
+//Seek data functions
+var steer_bulletID = [];
+var steer_steerData = [];
+var steer_steerSend = [];
+var steer_cooldown = [];
+var steer_it;
+for(steer_it=0;steer_it<1024;steer_it++)
+{
+  steer_bulletID[steer_it] = -1;
+  steer_steerData[steer_it] = "";
+  steer_steerSend[steer_it] = "";
+  steer_cooldown[steer_it] = 0;
+}
+
+function steer_createSeekPointer(bulID)
+{
+  var i;
+  for(i=0;i<1024;i++)
+  {
+    if(steer_bulletID[i]==-1 && steer_cooldown[i]<=0)
+    {
+      steer_bulletID[i] = bulID;
+      steer_steerData[i] = "0000";
+      steer_steerSend[steer_it] = "";
+      return i;
+    }
+  }
+  return -1;
+}
+
+function steer_removeSeekPointer(pID)
+{
+    steer_cooldown[pID] = 1500;
+}
+
+function steer_tryGet(pID,ind)
+{
+    if(steer_steerData[pID].length>ind) return steer_steerData[pID][ind];
+    return '0';
 }
 
 //Check functions
@@ -1181,6 +1574,30 @@ function insertFloatToChar4(str,delta,float)
     var ii = lngt+delta+i;
     var num = Math.floor(float/bs[i]);
     float = float % bs[i];
+
+    if(i==0)
+    {
+      num = num%62;
+      if(minus) num+=62;
+    }
+    str = str.replaceAt(ii,intToRASCII(num));
+  }
+
+  return str;
+}
+function insertIntToChar3(str,delta,int)
+{
+  var i,lngt=str.length;
+
+  var minus = (int<0);
+  if(minus) int = -int;
+
+  var bs = [15376,124,1];
+  for(i=0;i<3;i++)
+  {
+    var ii = lngt+delta+i;
+    var num = Math.floor(int/bs[i]);
+    int = int % bs[i];
 
     if(i==0)
     {
@@ -1241,12 +1658,47 @@ function GetRPU(players,lngt)
     {
       splitted = players[i].split(";");
       eff+="XXXXXXXXX";
-      eff = insertFloatToChar4(eff,-9,parseFloatE(splitted[0]));
-      eff = insertFloatToChar4(eff,-5,parseFloatE(splitted[1]));
-      eff = insertRotToChar1(eff,-1,parseFloatE(splitted[4]));
+      eff = insertFloatToChar4(eff,-9,func.parseFloatU(splitted[0]));
+      eff = insertFloatToChar4(eff,-5,func.parseFloatU(splitted[1]));
+      eff = insertRotToChar1(eff,-1,func.parseFloatU(splitted[4]));
     }
   }
 
+  return eff;
+}
+
+function GetBRP()
+{
+  var i,j,kngt,eff="";
+  for(i=0;i<1024;i++)
+  {
+    if(steer_steerSend[i]!="")
+    {
+      var awt1 = [0,0,0,0,0,0];
+      var awt2 = [0,0,0,0,0,0];
+      var i_t = i;
+      for(j=3;j>=0;j--) {
+        awt2[j] = i_t % 2;
+        i_t=Math.floor(i_t/2);
+      }
+      for(j=5;j>=0;j--) {
+        awt1[j] = i_t % 2;
+        i_t=Math.floor(i_t/2);
+      }
+
+      kngt = steer_steerSend[i].length;
+      for(j=0;j<kngt;j++)
+      {
+        var awn1 = awt1;
+        var awn2 = awt2;
+        if(steer_steerSend[i][j]=='L') {awn2[4] = 0; awn2[5] = 1;}
+        if(steer_steerSend[i][j]=='P') {awn2[4] = 1; awn2[5] = 0;}
+        if(steer_steerSend[i][j]=='0') {awn2[4] = 1; awn2[5] = 1;}
+        eff += bool6ToChar1(awn1) + bool6ToChar1(awn2);
+      }
+      steer_steerSend[i] = "";
+    }
+  }
   return eff;
 }
 
@@ -1330,14 +1782,14 @@ function GetRPC(players,lngt,sendAll)
       if(rbt[1][1]==1) //health
       {
         eff += "X";
-        eff = insertHealthToChar1(eff,-1,parseFloatE(splitted[8]));
+        eff = insertHealthToChar1(eff,-1,func.parseFloatU(splitted[8]));
         if(!sendAll) plr.mems[i].health = splitted[8];
       }
       if(rbt[1][2]==1) //resp pos
       {
         eff += "XXXXXXXX";
-        eff = insertFloatToChar4(eff,-8,parseFloatE(splitted[6]));
-        eff = insertFloatToChar4(eff,-4,parseFloatE(splitted[7]));
+        eff = insertFloatToChar4(eff,-8,func.parseFloatU(splitted[6]));
+        eff = insertFloatToChar4(eff,-4,func.parseFloatU(splitted[7]));
         if(!sendAll) plr.mems[i].rposX = splitted[6];
         if(!sendAll) plr.mems[i].rposY = splitted[7];
       }
@@ -1389,33 +1841,42 @@ function GetRPC(players,lngt,sendAll)
   if(!not_empty) return "DONT SEND";
   else return eff;
 }
+function GetRSD(str)
+{
+  var i,eff="";
+  str = str.split(";");
+  for(i=0;i<=60;i++)
+  {
+    eff+="XXX";
+    eff = insertIntToChar3(eff,-3,func.parseFloatU(str[i]));
+  }
+  return eff;
+}
 
 function serverGrow(ulam, place) {
   var det = asteroidIndex(ulam);
-  if (chunk_data[det[0]][det[1]][21 + 2 * parseInt(place)] != "") {
-    var bef = chunk_data[det[0]][det[1]][parseInt(place) + 1];
+  if (chunk_data[det[0]][det[1]][21 + 2 * func.parseIntU(place)] != "") {
+    var bef = chunk_data[det[0]][det[1]][func.parseIntU(place) + 1];
     if (!["5", "6", "25"].includes(bef)) return;
-    chunk_data[det[0]][det[1]][21 + 2 * parseInt(place)] = "";
-    chunk_data[det[0]][det[1]][22 + 2 * parseInt(place)] = "";
-    chunk_data[det[0]][det[1]][parseInt(place) + 1] =
+    chunk_data[det[0]][det[1]][21 + 2 * func.parseIntU(place)] = "";
+    chunk_data[det[0]][det[1]][22 + 2 * func.parseIntU(place)] = "";
+    chunk_data[det[0]][det[1]][func.parseIntU(place) + 1] =
       growSolid[bef].split(";")[2];
     sendToAllClients("/RetGrowNow " + ulam + " " + place + " X X");
   }
 }
 function serverDrill(ulam, place) {
   var det = asteroidIndex(ulam);
-  if (chunk_data[det[0]][det[1]][parseInt(place) + 1] == "2") {
+  if (chunk_data[det[0]][det[1]][func.parseIntU(place) + 1] == "2") {
     var gItem = drillGet(det);
     if (gItem == "0") return;
-    var gCountEnd = parseInt(
-      chunk_data[det[0]][det[1]][22 + 2 * parseInt(place)]
+    var gCountEnd = func.parseIntU(
+      chunk_data[det[0]][det[1]][22 + 2 * func.parseIntU(place)]
     );
-
-    if (isNaN(gCountEnd)) gCountEnd = 0;
     gCountEnd++;
 
-    chunk_data[det[0]][det[1]][21 + 2 * parseInt(place)] = gItem;
-    chunk_data[det[0]][det[1]][22 + 2 * parseInt(place)] = gCountEnd;
+    chunk_data[det[0]][det[1]][21 + 2 * func.parseIntU(place)] = gItem;
+    chunk_data[det[0]][det[1]][22 + 2 * func.parseIntU(place)] = gCountEnd;
 
     sendToAllClients(
       "/RetFobsDataChange " +
@@ -1431,13 +1892,13 @@ function serverDrill(ulam, place) {
   }
 }
 function drillGet(det) {
-  var typp = parseInt(chunk_data[det[0]][det[1]][0]+"");
+  var typp = func.parseIntU(chunk_data[det[0]][det[1]][0]+"");
   if(typp<0) typp=0;
   else typp = typp % 16;
   var ltdt = drillLoot[typp].split(";");
   var lngt = ltdt.length;
 
-  var rnd = randomInteger(0, 999);
+  var rnd = func.randomInteger(0, 999);
   var i;
 
   for (i = 0; i * 3 + 2 < lngt; i++) {
@@ -1453,7 +1914,7 @@ function growActive(ulam) {
   var det = asteroidIndex(ulam);
   for (i = 0; i < 20; i++) blockTab[i] = chunk_data[det[0]][det[1]][i + 1];
 
-  var typpu = parseInt(chunk_data[det[0]][det[1]][0]+"");
+  var typpu = func.parseIntU(chunk_data[det[0]][det[1]][0]+"");
   if(typpu<0) typpu = 0;
   else typpu = typpu % 16;
 
@@ -1466,7 +1927,7 @@ function growActive(ulam) {
       if (!growT.includes(ulam + "g" + i)) {
         if (chunk_data[det[0]][det[1]][21 + 2 * i] == "") {
           tab = growSolid[block].split(";");
-          tim = randomInteger(tab[0], tab[1]);
+          tim = func.randomInteger(tab[0], tab[1]);
           chunk_data[det[0]][det[1]][21 + 2 * i] = tim;
         }
         growT.push(ulam + "g" + i);
@@ -1481,7 +1942,7 @@ function growActive(ulam) {
         chunk_data[det[0]][det[1]][22 + 2 * i] < 5)
     ) {
       if (!drillT.includes(ulam + "w" + i)) {
-        tim = randomInteger(180, 420);
+        tim = func.randomInteger(180, 420);
         drillT.push(ulam + "w" + i);
         drillW.push(10);
         drillC.push(tim);
@@ -1494,8 +1955,8 @@ function growActive(ulam) {
 function nbtReset(ulam, place) {
   var ind,
     det = asteroidIndex(ulam);
-  chunk_data[det[0]][det[1]][21 + 2 * parseInt(place)] = "";
-  chunk_data[det[0]][det[1]][22 + 2 * parseInt(place)] = "";
+  chunk_data[det[0]][det[1]][21 + 2 * func.parseIntU(place)] = "";
+  chunk_data[det[0]][det[1]][22 + 2 * func.parseIntU(place)] = "";
 
   if (growT.includes(ulam + "g" + place)) {
     ind = growT.indexOf(ulam + "g" + place);
@@ -1534,12 +1995,12 @@ function invChangeTry(invID, item, count, slot) {
     if (!(itemS == item || countS == 0)) return false;
   } else if (count < 0) {
     //Remove
-    if (!(itemS == item && parseInt(countS) + parseInt(count) >= 0))
+    if (!(itemS == item && func.parseIntU(countS) + func.parseIntU(count) >= 0))
       return false;
   } else return true;
 
   effTab[slot * 2] = item;
-  effTab[slot * 2 + 1] = parseInt(effTab[slot * 2 + 1]) + parseInt(count);
+  effTab[slot * 2 + 1] = func.parseIntU(effTab[slot * 2 + 1]) + func.parseIntU(count);
 
   if (mode == "INV") plr.inventory[invID] = effTab.join(";");
   else plr.backpack[invID] = effTab.join(";");
@@ -1551,29 +2012,29 @@ function invChangeTry(invID, item, count, slot) {
 function checkFobChange(ulam, place, start1, start2) {
   var det = asteroidIndex(ulam);
   if (
-    chunk_data[det[0]][det[1]][22 + 2 * parseInt(place)] != "" &&
+    chunk_data[det[0]][det[1]][22 + 2 * func.parseIntU(place)] != "" &&
     (start1 == 21 || start2 == 21)
   )
     return false; //2 not required, driller item might disappear
 
   if (
-    chunk_data[det[0]][det[1]][parseInt(place) + 1] == start1 ||
-    chunk_data[det[0]][det[1]][parseInt(place) + 1] == start2 ||
-    chunk_data[det[0]][det[1]][parseInt(place) + 1] == ""
+    chunk_data[det[0]][det[1]][func.parseIntU(place) + 1] == start1 ||
+    chunk_data[det[0]][det[1]][func.parseIntU(place) + 1] == start2 ||
+    chunk_data[det[0]][det[1]][func.parseIntU(place) + 1] == ""
   )
     return true;
   else return false;
 }
 function fobChange(ulam, place, end) {
   var det = asteroidIndex(ulam);
-  chunk_data[det[0]][det[1]][parseInt(place) + 1] = end;
+  chunk_data[det[0]][det[1]][func.parseIntU(place) + 1] = end;
   nbtReset(ulam, place);
 }
 
 //Fob21 change functions
 function checkFobDataChange(ulam, place, item, deltaCount, id21) {
   var det = asteroidIndex(ulam);
-  if (chunk_data[det[0]][det[1]][parseInt(place) + 1] != id21) {
+  if (chunk_data[det[0]][det[1]][func.parseIntU(place) + 1] != id21) {
     return false;
   }
 
@@ -1583,15 +2044,14 @@ function checkFobDataChange(ulam, place, item, deltaCount, id21) {
   if (id21 == 52) max_count = 10;
 
   if (
-    chunk_data[det[0]][det[1]][21 + 2 * parseInt(place)] == "" ||
-    chunk_data[det[0]][det[1]][21 + 2 * parseInt(place)] == 0 ||
-    chunk_data[det[0]][det[1]][21 + 2 * parseInt(place)] == item
+    chunk_data[det[0]][det[1]][21 + 2 * func.parseIntU(place)] == "" ||
+    chunk_data[det[0]][det[1]][21 + 2 * func.parseIntU(place)] == 0 ||
+    chunk_data[det[0]][det[1]][21 + 2 * func.parseIntU(place)] == item
   ) {
-    var countEnd = parseInt(
-      chunk_data[det[0]][det[1]][22 + 2 * parseInt(place)]
+    var countEnd = func.parseIntU(
+      chunk_data[det[0]][det[1]][22 + 2 * func.parseIntU(place)]
     );
-    if (isNaN(countEnd)) countEnd = 0;
-    countEnd += parseInt(deltaCount);
+    countEnd += func.parseIntU(deltaCount);
     if (countEnd >= 0 && countEnd <= max_count) return true;
     else {
       return false;
@@ -1602,17 +2062,15 @@ function checkFobDataChange(ulam, place, item, deltaCount, id21) {
 }
 function fobDataChange(ulam, place, item, deltaCount) {
   var det = asteroidIndex(ulam);
-  var countEnd = parseInt(chunk_data[det[0]][det[1]][22 + 2 * parseInt(place)]);
-
-  if (isNaN(countEnd)) countEnd = 0;
-  countEnd += parseInt(deltaCount);
+  var countEnd = func.parseIntU(chunk_data[det[0]][det[1]][22 + 2 * func.parseIntU(place)]);
+  countEnd += func.parseIntU(deltaCount);
 
   if (countEnd != 0) {
-    chunk_data[det[0]][det[1]][21 + 2 * parseInt(place)] = item;
-    chunk_data[det[0]][det[1]][22 + 2 * parseInt(place)] = countEnd;
+    chunk_data[det[0]][det[1]][21 + 2 * func.parseIntU(place)] = item;
+    chunk_data[det[0]][det[1]][22 + 2 * func.parseIntU(place)] = countEnd;
   } else {
-    chunk_data[det[0]][det[1]][21 + 2 * parseInt(place)] = "";
-    chunk_data[det[0]][det[1]][22 + 2 * parseInt(place)] = "";
+    chunk_data[det[0]][det[1]][21 + 2 * func.parseIntU(place)] = "";
+    chunk_data[det[0]][det[1]][22 + 2 * func.parseIntU(place)] = "";
   }
   return countEnd;
 }
@@ -1640,25 +2098,25 @@ function nbt(ulam, place, lt, nw) {
   var det = asteroidIndex(ulam);
   if (lt == "n") {
     if (
-      chunk_data[det[0]][det[1]][21 + 2 * parseInt(place)] != "" &&
-      chunk_data[det[0]][det[1]][22 + 2 * parseInt(place)] != ""
+      chunk_data[det[0]][det[1]][21 + 2 * func.parseIntU(place)] != "" &&
+      chunk_data[det[0]][det[1]][22 + 2 * func.parseIntU(place)] != ""
     )
       return (
-        chunk_data[det[0]][det[1]][21 + 2 * parseInt(place)] +
+        chunk_data[det[0]][det[1]][21 + 2 * func.parseIntU(place)] +
         ";" +
-        chunk_data[det[0]][det[1]][22 + 2 * parseInt(place)]
+        chunk_data[det[0]][det[1]][22 + 2 * func.parseIntU(place)]
       );
     else return nw;
   }
   if (lt == "g") {
-    if (chunk_data[det[0]][det[1]][21 + 2 * parseInt(place)] != "")
-      return chunk_data[det[0]][det[1]][21 + 2 * parseInt(place)];
+    if (chunk_data[det[0]][det[1]][21 + 2 * func.parseIntU(place)] != "")
+      return chunk_data[det[0]][det[1]][21 + 2 * func.parseIntU(place)];
     else return nw;
   }
 }
 function getBlockAt(ulam, place) {
   var det = asteroidIndex(ulam);
-  var eff = chunk_data[det[0]][det[1]][parseInt(place) + 1];
+  var eff = chunk_data[det[0]][det[1]][func.parseIntU(place) + 1];
   if (eff != "") return eff;
   else return -1;
 }
@@ -1706,7 +2164,7 @@ function immortal(pid)
 
 //Asteroid functions
 function sazeConvert(saze) {
-  return parseIntE(saze.split("b")[1]) * 7 + parseIntE(saze.split("b")[0]) - 4;
+  return func.parseIntU(saze.split("b")[1]) * 7 + func.parseIntU(saze.split("b")[0]) - 4;
 }
 function generateAsteroid(saze) {
   var typeDatas;
@@ -1719,7 +2177,7 @@ function generateAsteroid(saze) {
     typeDatas = (saze.split("t")[1] + ";0;999").split(";");
   } else typeDatas = "0;0;999".split(";");
 
-  var rand = randomInteger(0, 999);
+  var rand = func.randomInteger(0, 999);
   var i = 0,
     j,
     k;
@@ -1730,18 +2188,18 @@ function generateAsteroid(saze) {
 
   var strobj = "";
   var typeDatas2 = fobGenerate[td].split(";");
-  var how_many = 2 * parseInt(saze); //parse all before first letter
+  var how_many = 2 * func.parseIntU(saze); //parse all before first letter
 
   for (j = 0; j < how_many; j++) {
     k = 0;
-    rand = randomInteger(0, 999);
+    rand = func.randomInteger(0, 999);
     while (
       !(rand >= typeDatas2[k + 1] && rand <= typeDatas2[k + 2]) &&
       k < 1000
     )
       k += 3;
     if (saze.split("").includes("t") && saze.split("t")[2].split(";")[j] != "")
-      strobj = strobj + ";" + parseIntE(saze.split("t")[2].split(";")[j]);
+      strobj = strobj + ";" + func.parseIntU(saze.split("t")[2].split(";")[j]);
     else if (k >= 1000) strobj = strobj + ";0";
     else strobj = strobj + ";" + typeDatas2[k];
   }
@@ -1759,7 +2217,7 @@ function Censure(pldata,pid,livID)
   var artid = plr.backpack[pid].split(";")[30] - 41;
   if(plr.backpack[pid].split(";")[31]=="0") artid = -41;
   if(artid<1 || artid>6) artid=0;
-  var cl_martid = parseIntE(pldata[5].split("&")[1]) % 100;
+  var cl_martid = func.parseIntU(pldata[5].split("&")[1]) % 100;
   artid = (100*artid + cl_martid);
   pldata[5] = pldata[5].split("&")[0] + "&" + artid;
 
@@ -1806,31 +2264,15 @@ wss.on("connection", function connection(ws) {
         plr.data[arg[1]] = censured;
       }
 
-      //impulse player damage
+      //impulse damage
       var j, caray = censured.split(";");
       if(caray.length>1 && arg[7]=="T")
       {
-        var rr = 2;
-
-        var xa = parseFloatE(caray[0]);
-        var ya = parseFloatE(caray[1]);
-        var xb = parseFloatE(arg[8]);
-        var yb = parseFloatE(arg[9]);
-
-        if(xb==xa) xb+=0.00001;
-        if(yb==ya) yb+=0.00001;
-
-        var xv = xb-xa;
-        var yv = yb-ya;
-
-        var xn = (rr*xv/Math.sqrt(xv*xv + yv*yv))
-        var yn = (rr*yv/Math.sqrt(xv*xv + yv*yv))
-
-        xa = xa - xn; ya = ya - yn;
-        xb = xb + xn; yb = yb + yn;
-
-        var aab = (yb-ya)/(xb-xa);
-        var adc = -1/(aab);
+        var xa = func.parseFloatU(caray[0]);
+        var ya = func.parseFloatU(caray[1]);
+        var xb = func.parseFloatU(arg[8]);
+        var yb = func.parseFloatU(arg[9]);
+        func.CollisionLinearBulletSet(xa,ya,xb,yb,1.2);
 
         if(pvp)
         for(j=0;j<max_players;j++)
@@ -1838,33 +2280,27 @@ wss.on("connection", function connection(ws) {
           if(plr.players[j]!="0" && plr.players[j]!="1" && arg[1]!=j && !plr.impulsed[arg[1]].includes(j))
           {
             var plas = plr.players[j].split(";");
-            var xc = parseFloatE(plas[0]);
-            var yc = parseFloatE(plas[1]);
-            var xd = (yc-ya + (aab*xa)-(adc*xc))/(aab-adc);
-            var yd = aab*(xd-xa) + ya;
-            if((xd>xa && xd>xb) || (xd<xa && xd<xb)) continue;
-            if(((xd-xc)**2)+((yd-yc)**2) <= ((rr)**2))
+            var xc = func.parseFloatU(plas[0]);
+            var yc = func.parseFloatU(plas[1]);
+            if(func.CollisionLinearCheck(xc,yc,0.92))
             {
-              DamageFLOAT(j,parseFloatE(gameplay[29]))
+              DamageFLOAT(j,func.parseFloatU(gameplay[29]))
               plr.impulsed[arg[1]].push(j);
             }
           }
         }
 
-        rr = 8.9;
-        xb = parseFloatE(arg[8]);
-        yb = parseFloatE(arg[9]);
         var lngts = scrs.length;
         for(j=0;j<lngts;j++)
         {
           var l = scrs[j].bID;
-          if(scrs[j].additionalData[2-2]=="2" && !plr.impulsed[arg[1]].includes(-l))
+          if(scrs[j].dataY[2-2]==2 && !plr.impulsed[arg[1]].includes(-l))
           {
-            var xc = scrs[j].posCX + ScrdToFloat(scrs[j].additionalData[8-2]);
-            var yc = scrs[j].posCY + ScrdToFloat(scrs[j].additionalData[9-2]);
-            if(((xb-xc)**2)+((yb-yc)**2) <= ((rr)**2))
+            var xc = scrs[j].posCX + func.ScrdToFloat(scrs[j].dataY[8-2]);
+            var yc = scrs[j].posCY + func.ScrdToFloat(scrs[j].dataY[9-2]);
+            if(func.CollisionLinearCheck(xc,yc,7.5))
             {
-              DamageBoss(j,parseFloatE(gameplay[29]))
+              DamageBoss(j,func.parseFloatU(gameplay[29]))
               plr.impulsed[arg[1]].push(-l);
             }
           }
@@ -1907,8 +2343,8 @@ wss.on("connection", function connection(ws) {
             plr.backpack[i] = "0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0";
           if (plr.upgrades[i] == "0") plr.upgrades[i] = "0;0;0;0;0";
 
-          plr.sHealth[i] = parseFloatE(plr.data[i].split(";")[8]);
-          plr.sRegTimer[i] = parseFloatE(plr.data[i].split(";")[10]);
+          plr.sHealth[i] = func.parseFloatU(plr.data[i].split(";")[8]);
+          plr.sRegTimer[i] = func.parseFloatU(plr.data[i].split(";")[10]);
 
           SaveAllNow();
           plr.conID[i] = arg[3];
@@ -1972,7 +2408,7 @@ wss.on("connection", function connection(ws) {
 
       var lc3T, lc3;
       var det = asteroidIndex(ulamID);
-      if (chunk_data[det[0]][det[1]][0] == "" || parseInt(chunk_data[det[0]][det[1]][0]) >= 1024) {
+      if (chunk_data[det[0]][det[1]][0] == "" || func.parseIntU(chunk_data[det[0]][det[1]][0]) >= 1024) {
         lc3 = generateAsteroid(localSize);
         lc3T = lc3.split(";");
         for (i = 0; i <= 20; i++) chunk_data[det[0]][det[1]][i] = lc3T[i];
@@ -2020,28 +2456,31 @@ wss.on("connection", function connection(ws) {
           if (chunk_data[det[0]][det[1]][0]!=scrID)
           {
             //Not exists
-            lc3 = scrID+";0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0";
-            lc3T = lc3.split(";");
-            for(i=0;i<=20;i++) chunk_data[det[0]][det[1]][i] = lc3T[i];
+            lc3 = scrID;
+            for(i=1;i<=60;i++) lc3 += ";0";
           }
           else
           {
             //Exists
             lc3 = chunk_data[det[0]][det[1]][0]+";"+chunk_data[det[0]][det[1]][1];
-            for(i=2;i<=20;i++) lc3 += ";0";
-            lc3T = lc3.split(";");
-            for(i=0;i<=20;i++) chunk_data[det[0]][det[1]][i] = lc3T[i];
+            for(i=2;i<=60;i++) lc3 += ";0";
           }
+          
+          lc3T = lc3.split(";");
+          for(i=0;i<=60;i++) chunk_data[det[0]][det[1]][i] = lc3T[i];
 
           var tpl = Object.assign({},scrTemplate);
           tpl.bID = bID;
           tpl.type = bossType;
-          tpl.posCX = parseFloat(bossPosX);
-          tpl.posCY = parseFloat(bossPosY);
-          tpl.generalData = [];
-          tpl.additionalData = [];
-          tpl.generalData = [lc3T[0],lc3T[1]];
-          for(i=2;i<=20;i++) tpl.additionalData[i-2] = "0";
+          tpl.posCX = func.parseFloatU(bossPosX);
+          tpl.posCY = func.parseFloatU(bossPosY);
+          tpl.dataX = [];
+          tpl.dataY = [];
+          tpl.bulCols = [];
+          tpl.dataX = [func.parseIntU(lc3T[0]),func.parseIntU(lc3T[1])];
+          for(i=2;i<=60;i++) tpl.dataY[i-2] = 0;
+          var tpl2 = {x:0,y:0}; tpl2.x = tpl.posCX; tpl2.y = tpl.posCY;
+          tpl.behaviour = new CBoss(bossType,tpl2,tpl.dataX,tpl.dataY,visionInfo);
           scrs.push(tpl);
         }
         else return;
@@ -2058,10 +2497,61 @@ wss.on("connection", function connection(ws) {
       var lngts = scrs.length;
       for(i=0;i<lngts;i++)
       {
-        if(scrs[i].bID==bID) {
+        if(scrs[i].bID==bID)
+        {
+          //Boss found
           scrs[i].timeToDisappear = 1000;
           if(inArena) scrs[i].timeToLose = 1000;
+
+          if(!plr.bossMemories[arg[1]].includes(bID))
+            plr.bossMemories[arg[1]].push(bID);
+
           break;
+        }
+      }
+    }
+    if(arg[0] == "/ScrForget")
+    {
+      //ScrForget 1[PlayerID] 2[bID]
+      var bID = arg[2];
+
+      var remindex = plr.bossMemories[arg[1]].indexOf(bID);
+      if(remindex!=-1)
+        plr.bossMemories[arg[1]].splice(remindex);
+    }
+    if(arg[0] == "/ScrShapeAdd")
+    {
+      //ScrShapeAdd 1[PlayerID] 2[bID] 3[shape] 4,5[sx,sy] 6,7,8[x,y,r] 9[col_identifier]
+      if (!checkPlayer(arg[1], arg[msl - 2])) return;
+
+      var bID = arg[2];
+
+      var lngts = scrs.length;
+      for(i=0;i<lngts;i++)
+      {
+        if(scrs[i].bID==bID)
+        {
+          var q,qlngt=scrs[i].bulCols.length;
+          for(q=0;q<qlngt;q++)
+            if(scrs[i].bulCols[q].col_identifier==arg[9]) return;
+
+          shape_description = {sx:0,sy:0};
+          default_offset = {cx:0,cy:0,lx:0,ly:0,lrot:0};
+          
+          shape_description.sx = func.parseFloatU(arg[4]);
+          shape_description.sy = func.parseFloatU(arg[5]);
+          default_offset.cx = scrs[i].posCX;
+          default_offset.cy = scrs[i].posCY;
+          default_offset.lx = func.parseFloatU(arg[6]);
+          default_offset.ly = func.parseFloatU(arg[7]);
+          default_offset.lrot = func.parseFloatU(arg[8]);
+
+          scrs[i].bulCols.push(new CShape(
+            arg[3],
+            shape_description,
+            default_offset,
+            arg[9]
+          ));
         }
       }
     }
@@ -2072,25 +2562,24 @@ wss.on("connection", function connection(ws) {
 
       var bID = arg[2];
       var blivID = arg[msl - 1];
-      var in_arena_range = 37;
 
       var j,lngts = scrs.length;
       for(i=0;i<lngts;i++)
       {
         if(scrs[i].bID==bID) {
-          if(scrs[i].additionalData[2-2]!="2") break;
+          if(scrs[i].dataY[2-2]!=2) break;
 
           var players_inside=1;
           for(j=0;j<max_players;j++)
             if(plr.players[j]!="0" && plr.players[j]!="1" && arg[1]!=j)
             {
               var plas = plr.players[j].split(";");
-              var dx = parseFloat(plas[0]) - scrs[i].posCX;
-              var dy = parseFloat(plas[1]) - scrs[i].posCY;
+              var dx = func.parseFloatU(plas[0]) - scrs[i].posCX;
+              var dy = func.parseFloatU(plas[1]) - scrs[i].posCY;
               if(dx**2 + dy**2 <= (in_arena_range)**2) players_inside++;
             }
 
-          if(players_inside==1) scrs[i].additionalData[4-2] = "1";
+          if(players_inside==1) scrs[i].dataY[4-2] = 1;
           else sendTo(ws,"/RetGiveUpTeleport "+arg[1]+" "+bID+" 1024 X "+blivID);
           break;
         }
@@ -2110,10 +2599,10 @@ wss.on("connection", function connection(ws) {
       {
         if(scrs[i].bID==bID)
         {
-          if(scrs[i].additionalData[2-2]=="0" && checkFobDataChange(fobID, fobIndex, "5", "-10", "52"))
+          if(scrs[i].dataY[2-2]==0 && checkFobDataChange(fobID, fobIndex, "5", "-10", "52"))
           {
             var gCountEnd = fobDataChange(fobID, fobIndex, "5", "-10");
-            scrs[i].additionalData[2-2] = "1";
+            scrs[i].dataY[2-2] = 1;
             resetScr(i);
             sendToAllClients(
               "/RetFobsDataChange " +
@@ -2368,7 +2857,7 @@ wss.on("connection", function connection(ws) {
 
       if (invChangeTry(ljPlaID, ljItem, -ljCount, ljSlot)) {
         var ljTab = plr.upgrades[ljPlaID].split(";");
-        ljTab[ljUpgID] = parseInt(ljTab[ljUpgID]) + 1;
+        ljTab[ljUpgID] = func.parseIntU(ljTab[ljUpgID]) + 1;
         var ij,
           eff = ljTab[0];
         for (ij = 1; ij < 5; ij++) eff += ";" + ljTab[ij];
@@ -2466,7 +2955,7 @@ wss.on("connection", function connection(ws) {
       plr.pushInventory[locPlaID] = newPush;
     }
     if (arg[0] == "/NewBulletSend") {
-      //NewBulletSend 1[PlayerID] 2[type] 3,4[position] 5,6[vector] 7[ID]
+      //NewBulletSend 1[PlayerID] 2[type] 3,4[position] 5,6[vector] 7[ID] 8[damage]
       if (!checkPlayer(arg[1], arg[msl - 2])) return;
 
       var tpl = Object.assign({},bulletTemplate);
@@ -2474,20 +2963,28 @@ wss.on("connection", function connection(ws) {
       tpl.vector = Object.assign({},bulletTemplate.vector);
       tpl.pos = Object.assign({},bulletTemplate.pos);
       tpl.damaged = [];
+      tpl.immune = [];
 
-      tpl.ID = parseIntP(arg[7]);
-      tpl.owner = parseIntP(arg[1]);
-      tpl.type = parseIntP(arg[2]);
-      tpl.start.x = parseFloatP(arg[3]);
-      tpl.start.y = parseFloatP(arg[4]);
-      tpl.vector.x = parseFloatP(arg[5]);
-      tpl.vector.y = parseFloatP(arg[6]);
-      tpl.pos = tpl.start;
+      tpl.ID = func.parseIntU(arg[7]);
+      tpl.owner = func.parseIntU(arg[1]);
+      tpl.type = func.parseIntU(arg[2]);
+      tpl.start.x = func.parseFloatU(arg[3]);
+      tpl.start.y = func.parseFloatU(arg[4]);
+      tpl.vector.x = func.parseFloatU(arg[5]);
+      tpl.vector.y = func.parseFloatU(arg[6]);
+      tpl.pos.x = tpl.start.x;
+      tpl.pos.y = tpl.start.y;
+
+      tpl.normal_damage = func.parseFloatU(arg[8]);
+      if(arg[2]=="3"||arg[2]=="13") tpl.is_unstable = true;
+      else tpl.is_unstable = false;
 
       if(tpl.vector.x==0) tpl.vector.x = 0.00001;
       if(tpl.vector.y==0) tpl.vector.y = 0.00001;
 
-      spawnBullet(tpl,arg);
+      arg[8] = "0";
+      //if(tpl.type==9 || tpl.type==10) return;
+      spawnBullet(tpl,arg,0);
     }
     if (arg[0] == "/NewBulletRemove") {
       //NewBulletRemove 1[PlayerID] 2[ID] 3[age]
@@ -2529,9 +3026,9 @@ wss.on("connection", function connection(ws) {
 
         var sth1 = plr.sHealth[pid];
 
-        var potHHH = parseFloat(plr.upgrades[pid].split(";")[0]) + getProtLevelAdd(artid) + parseFloat(gameplay[26]);
+        var potHHH = func.parseFloatU(plr.upgrades[pid].split(";")[0]) + getProtLevelAdd(artid) + func.parseFloatU(gameplay[26]);
 		    if(potHHH<-50) potHHH = -50; if(potHHH>56.397) potHHH = 56.397;
-		    var heal=0.02*parseFloat(gameplay[31])/(Math.ceil(50*Math.pow(health_base,potHHH))/50);
+		    var heal=0.02*func.parseFloatU(gameplay[31])/(Math.ceil(50*Math.pow(health_base,potHHH))/50);
         if(heal<0) heal=0;
         
         plr.sHealth[pid] += heal;
@@ -2595,6 +3092,28 @@ wss.on("connection", function connection(ws) {
         var gtt = GetRPC(plr.players,lngt,true);
         eff = "/RPC " + max_players + " " + gtt + " X X";
         sendTo(ws,eff);
+
+        //Bullet data send to new player
+        lngt = bulletsT.length;
+        var ag,tpl;
+        for(i=0;i<lngt;i++)
+        {
+          bulletsT[i].immune.push(imkConID+"");
+          //tpl = bulletsT[i];
+          /*ag = ["/",tpl.owner,tpl.type,tpl.start.x,tpl.start.y,tpl.vector.x,tpl.vector.y,tpl.ID,tpl.age].join(" ").replaceAll(".",",").split(" ");
+          sendTo(ws,
+            "/RetNewBulletSend " +
+              ag[1]+" " +
+              ag[2]+" " +
+              ag[3]+" " +
+              ag[4]+" " +
+              ag[5]+" " +
+              ag[6]+" " +
+              ag[7]+" " +
+              ag[8]+" " +
+              " X X"
+          );*/
+        }
       }
     }
   });
@@ -2633,7 +3152,7 @@ function translate(str, mod) {
 
   //If just translated
   try {
-    var ipr = parseIntE(str) + "";
+    var ipr = func.parseIntE(str) + "";
     return ipr;
   } catch {
     return "ERROR";
@@ -2704,7 +3223,7 @@ function allPercentRemove(str, must_be_1000) {
       lng--;
       pom = percentRemove(pom);
       pre = totalChance;
-      totalChance += parseIntE(parseFloatE(pom) * 10 + "");
+      totalChance += func.parseIntE(func.parseFloatE(pom) * 10 + "");
       tab[i] = pre + ";" + (totalChance - 1);
     }
   }
@@ -2808,79 +3327,89 @@ function finalTranslate(varN) {
         try {
           //Normal gameplay
           if (psPath[1] == "turbo_regenerate_multiplier")
-            gameplay[0] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[0] = func.parseFloatE(jse3Dat[i]) + "";
           if (psPath[1] == "turbo_use_multiplier")
-            gameplay[1] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[1] = func.parseFloatE(jse3Dat[i]) + "";
 
           if (psPath[1] == "health_level_add")
-            gameplay[26] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[26] = func.parseFloatE(jse3Dat[i]) + "";
           if (psPath[1] == "drill_level_add")
-            gameplay[2] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[2] = func.parseFloatE(jse3Dat[i]) + "";
 
           if (psPath[1] == "health_regenerate_cooldown")
-            gameplay[4] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[4] = func.parseFloatE(jse3Dat[i]) + "";
           if (psPath[1] == "health_regenerate_multiplier")
-            gameplay[5] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[5] = func.parseFloatE(jse3Dat[i]) + "";
           if (psPath[1] == "crash_minimum_energy")
-            gameplay[6] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[6] = func.parseFloatE(jse3Dat[i]) + "";
           if (psPath[1] == "crash_damage_multiplier")
-            gameplay[7] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[7] = func.parseFloatE(jse3Dat[i]) + "";
           
           if (psPath[1] == "spike_damage")
-            gameplay[8] = parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "unstable_matter_damage")
-            gameplay[28] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[8] = func.parseFloatE(jse3Dat[i]) + "";
           if (psPath[1] == "copper_bullet_damage")
-            gameplay[3] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[3] = func.parseFloatE(jse3Dat[i]) + "";
           if (psPath[1] == "red_bullet_damage")
-            gameplay[27] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[27] = func.parseFloatE(jse3Dat[i]) + "";
+          if (psPath[1] == "unstable_matter_damage")
+            gameplay[28] = func.parseFloatE(jse3Dat[i]) + "";
+          if (psPath[1] == "coal_bullet_damage")
+            gameplay[33] = func.parseFloatE(jse3Dat[i]) + "";
+          if (psPath[1] == "fire_bullet_damage")
+            gameplay[34] = func.parseFloatE(jse3Dat[i]) + "";
           if (psPath[1] == "bullet_owner_push")
-            gameplay[30] = parseFloatE(jse3Dat[i]) + "";
-            if (psPath[1] == "healing_potion_hp")
-            gameplay[31] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[30] = func.parseFloatE(jse3Dat[i]) + "";
+          if (psPath[1] == "healing_potion_hp")
+            gameplay[31] = func.parseFloatE(jse3Dat[i]) + "";
+          if (psPath[1] == "killing_potion_hp")
+            gameplay[35] = func.parseFloatE(jse3Dat[i]) + "";
 
           if (psPath[1] == "player_normal_speed")
-            gameplay[9] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[9] = func.parseFloatE(jse3Dat[i]) + "";
           if (psPath[1] == "player_brake_speed")
-            gameplay[10] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[10] = func.parseFloatE(jse3Dat[i]) + "";
           if (psPath[1] == "player_turbo_speed")
-            gameplay[11] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[11] = func.parseFloatE(jse3Dat[i]) + "";
           if (psPath[1] == "drill_normal_speed")
-            gameplay[12] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[12] = func.parseFloatE(jse3Dat[i]) + "";
           if (psPath[1] == "drill_brake_speed")
-            gameplay[13] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[13] = func.parseFloatE(jse3Dat[i]) + "";
 
           if (psPath[1] == "vacuum_drag_multiplier")
-            gameplay[14] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[14] = func.parseFloatE(jse3Dat[i]) + "";
           if (psPath[1] == "all_speed_multiplier")
-            gameplay[15] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[15] = func.parseFloatE(jse3Dat[i]) + "";
 
           //Artefact gameplay
           if (psPath[1] == "at_protection_health_level_add")
-            gameplay[16] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[16] = func.parseFloatE(jse3Dat[i]) + "";
           if (psPath[1] == "at_protection_health_regenerate_multiplier")
-            gameplay[17] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[17] = func.parseFloatE(jse3Dat[i]) + "";
 
           if (psPath[1] == "at_impulse_power_regenerate_multiplier")
-            gameplay[18] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[18] = func.parseFloatE(jse3Dat[i]) + "";
           if (psPath[1] == "at_impulse_time")
-            gameplay[19] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[19] = func.parseFloatE(jse3Dat[i]) + "";
           if (psPath[1] == "at_impulse_speed")
-            gameplay[20] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[20] = func.parseFloatE(jse3Dat[i]) + "";
           if (psPath[1] == "at_impulse_damage")
-            gameplay[29] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[29] = func.parseFloatE(jse3Dat[i]) + "";
 
           if (psPath[1] == "at_illusion_power_regenerate_multiplier")
-            gameplay[21] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[21] = func.parseFloatE(jse3Dat[i]) + "";
           if (psPath[1] == "at_illusion_power_use_multiplier")
-            gameplay[22] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[22] = func.parseFloatE(jse3Dat[i]) + "";
 
           if (psPath[1] == "at_unstable_normal_avarage_time")
-            gameplay[23] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[23] = func.parseFloatE(jse3Dat[i]) + "";
           if (psPath[1] == "at_unstable_special_avarage_time")
-            gameplay[24] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[24] = func.parseFloatE(jse3Dat[i]) + "";
           if (psPath[1] == "at_unstable_force")
-            gameplay[25] = parseFloatE(jse3Dat[i]) + "";
+            gameplay[25] = func.parseFloatE(jse3Dat[i]) + "";
+
+          //2.0 attacker data
+          if (psPath[1] == "boss_damage_multiplier")
+            gameplay[32] = func.parseFloatE(jse3Dat[i]) + "";
         } catch {
           datapackError("Error in variable: " + jse3Var[i]);
         }
@@ -2889,7 +3418,7 @@ function finalTranslate(varN) {
       {
           try{
 
-          mID=parseIntE(psPath[1]);
+          mID=func.parseIntE(psPath[1]);
           customStructures[mID]=jse3Dat[i].replaceAll('^',' ');
 
           }catch{datapackError("Error in variable: " + jse3Var[i]);}
@@ -2898,14 +3427,14 @@ function finalTranslate(varN) {
       if (psPath[0] == "game_translate") {
         if (psPath[1] == "Asteroids") {
           try {
-            mID = parseIntE(psPath[2]);
+            mID = func.parseIntE(psPath[2]);
             translateAsteroid[mID] = jse3Dat[i];
           } catch {
             datapackError("Error in variable: " + jse3Var[i]);
           }
         } else if (psPath[1] == "Items_and_objects") {
           try {
-            mID = parseIntE(psPath[2]);
+            mID = func.parseIntE(psPath[2]);
             translateFob[mID] = jse3Dat[i];
           } catch {
             datapackError("Error in variable: " + jse3Var[i]);
@@ -2935,8 +3464,8 @@ function finalTranslate(varN) {
       ) {
         try {
           if (psPath[0] == "modified_drops")
-            mID = parseIntE(translate(psPath[1], 2));
-          else mID = parseIntE(translate(psPath[1], 1));
+            mID = func.parseIntE(translate(psPath[1], 2));
+          else mID = func.parseIntE(translate(psPath[1], 1));
           jse3Var[i] = psPath[0] + ";" + mID;
 
           jse3Dat[i] = translateAll(jse3Dat[i], 2);
@@ -2960,13 +3489,13 @@ function finalTranslate(varN) {
     } else if (lgt == 3) {
       if (psPath[0] == "craftings") {
         try {
-          mID = parseIntE(psPath[1]);
+          mID = func.parseIntE(psPath[1]);
           if (psPath[2] == "title_image") {
             mID2 = 7;
             mID = 7 * (mID - 1) + 6;
             jse3Dat[i] = translate(jse3Dat[i], 2) + ";1;0;0;-1;1";
           } else {
-            mID2 = parseIntE(psPath[2]);
+            mID2 = func.parseIntE(psPath[2]);
             mID = 7 * (mID - 1) + mID2 - 1;
             jse3Dat[i] = translateAll(jse3Dat[i], 2);
           }
@@ -2992,15 +3521,15 @@ function finalTranslate(varN) {
         }
       } else if (psPath[0] == "generator_settings") {
         try {
-          mID = parseIntE(psPath[1]);
-          if (mID < 0 || mID > 31) nev++;
+          mID = func.parseIntE(psPath[1]);
+          if (mID < 0 || mID > 31) throw "error";
 
           if (psPath[2] == "settings") {
             biomeTags[mID] = jse3Dat[i].replaceAll(" ", "_");
           } else if (psPath[2] != "chance") {
             if (psPath[2] == "all_sizes") mID2 = -4;
-            else mID2 = parseIntE(psPath[2]) - 4;
-            if ((mID2 < 0 || mID2 > 6) && mID2 != -4) nev++;
+            else mID2 = func.parseIntE(psPath[2]) - 4;
+            if ((mID2 < 0 || mID2 > 6) && mID2 != -4) throw "error";
 
             if (mID2 != -4) mID = 7 * mID + mID2;
             else mID = 7 * mID;
@@ -3035,23 +3564,23 @@ function finalTranslate(varN) {
     if (lgt == 3) {
       if (psPath[0] == "generator_settings") {
         try {
-          mID = parseIntE(psPath[1]);
-          if (mID < 0 || mID > 31) nev++;
+          mID = func.parseIntE(psPath[1]);
+          if (mID < 0 || mID > 31) throw "error";
 
           if (psPath[2] == "chance") {
-            if (mID == 0) nev++;
+            if (mID == 0) throw "error";
             var efe = mID + ";" + cur1000biome + ";";
 
             var le = jse3Dat[i].length;
             if (jse3Dat[i][le - 1] == "%")
               jse3Dat[i] = percentRemove(jse3Dat[i]);
-            else nev++;
+            else throw "error";
 
             var mno;
             if (tagContains(biomeTags[mID], "structural")) mno = 2;
             else mno = 1;
 
-            cur1000biome += mno * parseIntE(parseFloatE(jse3Dat[i]) * 10 + "");
+            cur1000biome += mno * func.parseIntE(func.parseFloatE(jse3Dat[i]) * 10 + "");
             efe += cur1000biome - 1 + ";";
             biomeChances += efe;
           }
@@ -3118,7 +3647,7 @@ function intsAll(str, div) {
   try {
     if (str != "")
       for (i = 0; i < lngt; i++) {
-        pom = parseIntE(strs[i]);
+        pom = func.parseIntE(strs[i]);
       }
   } catch {
     return false;
@@ -3138,12 +3667,12 @@ function in1000(str, must_be_1000) {
   var actual = -1;
   for (i = 1; i < lngt; i++) {
     if (ended) {
-      if (actual + 1 != parseIntE(strT[i])) return false;
+      if (actual + 1 != func.parseIntE(strT[i])) return false;
       actual++;
       ended = false;
     } else {
-      if (actual > parseIntE(strT[i]) + 1) return false;
-      actual = parseIntE(strT[i]);
+      if (actual > func.parseIntE(strT[i]) + 1) return false;
+      actual = func.parseIntE(strT[i]);
       ended = true;
       i++;
     }
@@ -3160,7 +3689,7 @@ function goodItems(str, craft_mode) {
   if (str == "") lngt = 0;
 
   for (i = 0; i < lngt; i += 2) {
-    if (parseIntE(strT[i + 1]) < 0) return false;
+    if (func.parseIntE(strT[i + 1]) < 0) return false;
     if (strT[i] == "0" && strT[i + 1] != "0") return false;
     if (strT[i + 1] == "0" && strT[i] != "0") return false;
   }
@@ -3177,9 +3706,9 @@ function goodItems(str, craft_mode) {
         if (
           strT[i + 4] == "0" ||
           strT[i] == "0" ||
-          strT[i] == strT[i + 2] ||
-          strT[i + 2] == strT[i + 4] ||
-          strT[i + 4] == strT[i]
+          strT[i] == strT[i + 2] //||
+          //strT[i + 2] == strT[i + 4] ||
+          //strT[i + 4] == strT[i]
         )
           return false;
     }
@@ -3203,26 +3732,26 @@ function checkDatapackGoodE() {
   var i;
 
   //Check int arrays
-  if (!intsAll(craftings, 6) || !goodItems(craftings, true)) nev++;
-  if (!intsAll(biomeChances, 3) || !in1000(biomeChances, false)) nev++;
+  if (!intsAll(craftings, 6) || !goodItems(craftings, true)) throw "error";
+  if (!intsAll(biomeChances, 3) || !in1000(biomeChances, false)) throw "error";
   for (i = 0; i < 16; i++) {
     if (
       !intsAll(drillLoot[i], 3) ||
       !in1000(drillLoot[i], false) ||
       !drillGoodItem(drillLoot[i])
     )
-      nev++;
+      throw "error";
   }
   for (i = 0; i < 64; i++) {
-    if (!intsAll(fobGenerate[i], 3) || !in1000(fobGenerate[i], false)) nev++;
+    if (!intsAll(fobGenerate[i], 3) || !in1000(fobGenerate[i], false)) throw "error";
   }
   for (i = 0; i < 224; i++) {
     if (typeSet[i] != "")
-      if (!intsAll(typeSet[i], 3) || !in1000(typeSet[i], true)) nev++;
+      if (!intsAll(typeSet[i], 3) || !in1000(typeSet[i], true)) throw "error";
   }
   for (i = 0; i < 128; i++) {
     if (!intsAll(modifiedDrops[i], 2) || !goodItems(modifiedDrops[i], false))
-      nev++;
+      throw "error";
   }
 }
 
@@ -3239,14 +3768,14 @@ function datapackPaste(splitTab) {
     //Load data
     craftings = raws[0];
     biomeChances = raws[8];
-    craftMaxPage = parseIntE(raws[1]) + "";
+    craftMaxPage = func.parseIntE(raws[1]) + "";
 
     for (i = 0; i < 16; i++) drillLoot[i] = raws[2].split("'")[i];
     for (i = 0; i < 64; i++) fobGenerate[i] = raws[3].split("'")[i];
     for (i = 0; i < 224; i++) typeSet[i] = raws[4].split("'")[i];
     for (i = 0; i < gpl_number; i++) {
-      if (false) gameplay[i] = parseIntE(raws[5].split("'")[i]) + "";
-      else gameplay[i] = parseFloatE(raws[5].split("'")[i]) + "";
+      if (false) gameplay[i] = func.parseIntE(raws[5].split("'")[i]) + "";
+      else gameplay[i] = func.parseFloatE(raws[5].split("'")[i]) + "";
     }
     for (i = 0; i < 128; i++) modifiedDrops[i] = raws[6].split("'")[i];
     for (i = 0; i < 32; i++) biomeTags[i] = raws[7].replaceAll(" ", "_").split("'")[i];
@@ -3306,10 +3835,14 @@ if (!existsF("ServerUniverse/UniverseInfo.se3")) {
 }
 
 if (!existsF("ServerUniverse/Seed.se3")) {
-  seed = randomInteger(0, 10000000);
+  seed = func.randomInteger(0, 10000000);
   writeF("ServerUniverse/Seed.se3", seed + "\r\n");
   console.log("New seed generated: [" + seed + "]");
-} else seed = parseIntE(readF("ServerUniverse/Seed.se3").split("\r\n")[0]);
+}
+else {
+  seed = func.parseIntU(readF("ServerUniverse/Seed.se3").split("\r\n")[0]);
+  writeF("ServerUniverse/Seed.se3", seed + "\r\n");
+}
 
 function laggy_comment(nn)
 {

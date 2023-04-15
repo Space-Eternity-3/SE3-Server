@@ -11,6 +11,6 @@
     "url": "https://github.com/Kamiloso"
   },
   "dependencies": {
-    "ws": "^8.8.1"
+    "ws": "^8.13.0"
   }
 }
