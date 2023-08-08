@@ -2,11 +2,11 @@
 
 <
 Datapack documentation:
-https://se3.page/docs/Beta-1.15/SE3Documentation/
+https://se3.page/docs/Beta-2.0/SE3Documentation/
 Edit file and select it in your SE3 browser.
 >
 
-version: 'Beta 1.15'; <Don't change>
+version: 'Beta 2.0'; <Don't change>
 name: 'DEFAULT'; <Rename it>
 craftings
 {
@@ -119,7 +119,7 @@ drill_loot
 	stone: stone(100%);
 	copper: copper(92%) + turbo_element(8%);
 	gold: gold(30%);
-	grass: stone(92%) + magic_element(8%);
+	grass: bush(70%) + stone(22%) + magic_element(8%);
 	amethyst: small_amethyst(20%) + power_element(4%);
 	coal: coal(100%);
 	magnetic: magnetic_stone(100%);
@@ -136,50 +136,119 @@ modified_drops
 }
 gameplay
 {
+	<PLAYER SETTINGS>
 	health_level_add: 0;
 	drill_level_add: 0;
-	
 	health_regenerate_cooldown: 2,5;
 	health_regenerate_multiplier: 4;
-	turbo_regenerate_multiplier: 1;
-	turbo_use_multiplier: 2;
-	crash_minimum_energy: 5;
-	crash_damage_multiplier: 0,7;
-	vacuum_drag_multiplier: 1;
+	turbo_regenerate_multiplier: 1,5;
+	turbo_use_multiplier: 1,5;
 	
+	<PLAYER MOVEMENT>
 	all_speed_multiplier: 1;
-	player_normal_speed: 11;
-	player_brake_speed: -7;
+	vacuum_drag_multiplier: 1;
+	player_normal_speed: 13;
+	player_brake_speed: -8,5;
 	player_turbo_speed: 18; <Only if turbo level is 0>
-	drill_normal_speed: 8;
-	drill_brake_speed: -5;
+	drill_normal_speed: 9;
+	drill_brake_speed: -6;
+	bullet_owner_push: 1;
+	stone_geyzer_force_multiplier: 1;
+	magnetic_geyzer_force_multiplier: 4;
 	
-	spike_damage: 5;
+	<CRASH DAMAGE>
+	crash_minimum_energy: 6;
+	crash_damage_multiplier: 0,6;
+	
+	<PLAYER BULLET AND STATIC COLLIDER DAMAGES>
 	copper_bullet_damage: 3;
 	red_bullet_damage: 4;
-	unstable_matter_damage: 8;
-	coal_bullet_damage: 2,5;
+	coal_bullet_damage: 2;
 	fire_bullet_damage: 3;
-	bullet_owner_push: 1;
+	unstable_matter_damage: 8;
+	spike_damage: 5;
+	star_collider_damage: 5;
+	
+	<BULLET EFFECTIVITY MODIFIERS>
+	boss_fire_effectivity: 2;
+	boss_unstable_effectivity: 1,25;
+	
+	<HEALING>
 	healing_potion_hp: 20;
+	blank_potion_hp: 15;
 	killing_potion_hp: 15;
 	
+	<GROW TIMES>
+	amethyst_grow_time_min: 60;
+	amethyst_grow_time_max: 180;
+	magnetic_alien_grow_time: 3;
+	
+	<ARTEFACTS>
 	at_protection_health_level_add: 2,272;
-	at_protection_health_regenerate_multiplier: 1,5;	<relative variable>
-					
+	at_protection_health_regenerate_multiplier: 1,5;	<relative variable>	
 	at_impulse_power_regenerate_multiplier: 1;
 	at_impulse_time: 0,4;
 	at_impulse_speed: 70;
-	at_impulse_damage: 15;
-					
+	at_impulse_damage: 8;
 	at_illusion_power_regenerate_multiplier: 1;
 	at_illusion_power_use_multiplier: 2;
-					
 	at_unstable_normal_avarage_time: 1,5;
-	at_unstable_special_avarage_time: 3;
-	at_unstable_force: 15;
-	
+	at_unstable_special_avarage_time: 1,5;
+	at_unstable_force: 10;
+
+	<BULLET SPEEDS>
+	copper_bullet_speed: 0,45;
+	red_bullet_speed: 0,45;
+	unstable_bullet_speed: 0,35;
+	fire_bullet_speed: 0,4;
+	coal_bullet_speed: 0,45;
+	boss_bullet_speed: 0,35;
+	boss_seeker_speed: 0,25;
+
+	<CYCLIC DAMAGES>
+	cyclic_damage_multiplier: 1;
+	cyclic_fire_damage: 2;
+	cyclic_poison_damage: 1;
+	cyclic_remote_damage: 1;
+	cyclic_fire_time: 2;
+	cyclic_spike_time: 6;
+	cyclic_spikeball_time: 4;
+	cyclic_stickybulb_time: 4;
+
+	<BOSS DAMAGES>
 	boss_damage_multiplier: 1;
+	boss_bullet_electron_damage: 35;
+	boss_bullet_fire_damage: 4;
+	boss_bullet_spike_damage: 6;
+	boss_bullet_brainwave_damage: 6;
+	boss_bullet_rocket_damage: 12;
+	boss_bullet_spikeball_damage: 7;
+	boss_bullet_copper_damage: 4;
+	boss_bullet_red_damage: 5;
+	boss_bullet_unstable_damage: 6;
+	boss_bullet_graviton_damage: 3;
+	boss_bullet_neutronium_damage: 15;
+	boss_starandus_geyzer_damage: 4;
+	boss_adecodron_sphere_damage: 10;
+	boss_octogone_sphere_damage: 8;
+
+	<BOSS BATTLE SETTINGS>
+	boss_battle_time: 180;
+	boss_hp_protector_1: 800;
+	boss_hp_protector_2: 1000;
+	boss_hp_protector_3: 1200;
+	boss_hp_adecodron_1: 800;
+	boss_hp_adecodron_2: 1000;
+	boss_hp_adecodron_3: 1200;
+	boss_hp_octogone_1: 800;
+	boss_hp_octogone_2: 1000;
+	boss_hp_octogone_3: 1200;
+	boss_hp_starandus_1: 800;
+	boss_hp_starandus_2: 1000;
+	boss_hp_starandus_3: 1200;
+	boss_hp_degenerator_1: 800;
+	boss_hp_degenerator_2: 1000;
+	boss_hp_degenerator_3: 1200;
 }
 generator_settings
 {
@@ -187,9 +256,9 @@ generator_settings
 	{
 		settings: [];
 		
-		<Size>4: stone(50%) + copper(45%) + gold(5%);
-		<Size>5: stone(50%) + copper(45%) + gold(5%);
-		<Size>6: stone(50%) + copper(20%) + coal(23,5%) + gold(5%) + amethyst(1,5%);
+		<Size>4: stone(50%) + copper(47%) + gold(3%);
+		<Size>5: stone(50%) + copper(47%) + gold(3%);
+		<Size>6: stone(50%) + copper(20%) + coal(25,5%) + gold(3%) + amethyst(1,5%);
 		<Size>7: stone(50%) + copper(30%) + coal(20%);
 		<Size>8: stone(50%) + copper(30%) + coal(20%);
 		<Size>9: stone(50%) + coal(20%) + grass(15%) + magnetic(15%);
@@ -205,7 +274,7 @@ generator_settings
 	
 		<Size>4: coal(100%);
 		<Size>5: coal(100%);
-		<Size>6: coal(97%) + diamond(3%);
+		<Size>6: coal(98%) + diamond(2%);
 		<Size>7: coal(65%) + red(35%);
 		<Size>8: coal(65%) + red(35%);
 		<Size>9: coal(45%) + red(55%);
@@ -227,13 +296,15 @@ generator_settings
 		settings: [];
 	
 		all_sizes: grass(60%) + magnetic(40%);
+		<Size>4: grass(60%) + magnetic(34%) + gold(6%);
+		<Size>5: grass(60%) + magnetic(34%) + gold(6%);
 	}
 	
 	<---STRUCTURES--->
 	
 	<Arena structure> 4
 	{
-		chance: 5%;
+		chance: 4%;
 		settings: [
 			structural, arena,
 			ring.inner.change -> 0, ring.inner.change -> 50,
@@ -257,7 +328,7 @@ generator_settings
 	}
 	<Cementery structure> 6
 	{
-		chance: 4%;
+		chance: 3%;
 		settings: [
 			structural, cementery,
 			ring.inner.change -> 0, ring.inner.change -> 20,
@@ -266,6 +337,18 @@ generator_settings
 		];
 		
 		all_sizes: stoneB(100%);
+	}
+	<Star structure> 7
+	{
+		chance: 1,5%;
+		settings: [
+			structural, star,
+			ring.inner.change -> 0, ring.inner.change -> 20,
+			radius = 40,
+			density = 100%,
+		];
+		
+		all_sizes: coalB(100%);
 	}
 	<max 31 biomes + default>
 }
@@ -279,6 +362,7 @@ objects_generate
 	grass: bush(35%) + big_bush(7,5%) + stone(7,5%) + alien(15%);
 	amethyst: small_amethyst(20%) + medium_amethyst(20%) + large_amethyst(20%);
 	coal: coal(45%);
+	coalB: coal(45%) + fire_bullet(20%);
 	magnetic: magnetic_stone(35%) + magnetic_alien_activated(15%);
 	magneticA: magnetic_stone(35%) + magnetic_alien_activated(15%) + mega_geyzer(8%);
 	red: red_stone(35%) + red_spikes(7,5%) + red_alien(15%);
@@ -371,7 +455,7 @@ game_translate <low-level settings>
 		62: blank_element;
 		63: killing_potion;				<only item>
 		64: coal_bullet;				<only item>
-		65: fire_bullet;				<only item>
+		65: fire_bullet;
 	}
 }
 custom_structures <advanced settings>

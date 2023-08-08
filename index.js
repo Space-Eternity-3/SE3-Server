@@ -12,23 +12,29 @@ const unit = 0.0008;
 const in_arena_range = 37;
 
 //Global variables
-var serverVersion = "Beta 1.15";
-var serverRedVersion = "Beta_1_15";
+var serverVersion = "Beta 2.0";
+var serverRedVersion = "Beta_2_0";
 var clientDatapacksVar = "";
 var seed;
 var hourHeader = "";
-var gpl_number = 36;
+var gpl_number = 90;
 var max_players = 128;
 
-var boss_damages = [0,0,0,0,35,4.25,6,5,0,10,6,3.75,5,8,0,0];
-var other_bullets_colliders = [0,0.08,0.08,0.08,1,0.25,0.25,1.2,1.68,0.92,0.92,0.25,0.25,0.25,0.08,0.08];
-var bullet_air_consistence = [0,0,0,1,0,1,0,1,0,0,0,0,0,1,0,1];
+var boss_damages = [0,0,0,0,-1,-1,-1,-1,0,-1,-1,-1,-1,-1,0,0 ,-1,-1,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+var other_bullets_colliders = [0,0.14,0.14,0.12,1,0.25,0.25,1.2,1.68,0.92,0.92,0.25,0.25,0.25,0.14,0.08 ,1.68,0.25,0.08,0.08,0.08,0.08,0.08,0.08,0.08,0.08,0.08,0.08,0.08,0.08,0.08,0.08];
+var bullet_air_consistence = [0,0,0,1,0,1,0,1,0,0,0,0,0,1,0,1 ,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
 
 if(Number.isInteger(config.max_players))
   max_players = config.max_players;
 
 var pvp = true;
 if(config.pvp==false) pvp = false;
+
+var show_positions = true;
+if(config.show_positions==false) show_positions = false;
+
+var universe_name = "ServerUniverse";
+if(config.universe_name) universe_name = config.universe_name;
 
 var chunk_data = [];
 var chunk_names = [];
@@ -142,9 +148,9 @@ var bulletsT = [];
 var scrs = [];
 
 var growSolid = [];
-growSolid[5] = "4500;12000;6";
-growSolid[6] = "4500;12000;7";
-growSolid[25] = "150;150;23";
+growSolid[5] = "-1;-1;6";
+growSolid[6] = "-1;-1;7";
+growSolid[25] = "-1;-1;23";
 
 var jse3Var = [];
 var jse3Dat = [];
@@ -159,7 +165,7 @@ var fobGenerate = new Array(64);
 var biomeTags = new Array(32);
 var customStructures = new Array(32);
 var typeSet = new Array(224);
-var gameplay = new Array(64);
+var gameplay = new Array(256);
 var modifiedDrops = new Array(128);
 var translateFob = [];
 var translateAsteroid = [];
@@ -182,7 +188,7 @@ modifiedDrops.fill(""); Object.seal(modifiedDrops);
 //Classes
 class CShooter
 {
-  constructor(bul_typ,angl_deg,deviat_deg,precis_deg,rad,ths,alway,freq) {
+  constructor(bul_typ,angl_deg,deviat_deg,precis_deg,rad,ths,alway,freq,activess,cld,otid,slvc) {
     this.bullet_type = bul_typ;
     this.angle = angl_deg*3.14159/180;
     this.max_deviation = deviat_deg*3.14159/180;
@@ -191,9 +197,15 @@ class CShooter
     this.thys = ths;
     this.stupid = alway;
     this.frequency = freq;
+    this.actives = activess;
+    this.cooldown = cld;
+    this.one_time_id = otid; //only prime numbers
+    this.salvic = slvc;
   }
   CanShoot(x,y)
   {
+    x -= func.ScrdToFloat(this.thys.dataY[8-2]);
+    y -= func.ScrdToFloat(this.thys.dataY[9-2]);
     var pat = func.RotatePoint([x,y],-(this.angle+func.ScrdToFloat(this.thys.dataY[10-2])*3.14159/180),false);
     x = pat[0]-this.radius; y = pat[1];
 
@@ -202,6 +214,8 @@ class CShooter
   }
   BestDeviation(x,y)
   {
+    x -= func.ScrdToFloat(this.thys.dataY[8-2]);
+    y -= func.ScrdToFloat(this.thys.dataY[9-2]);
     var pat = func.RotatePoint([x,y],-(this.angle+func.ScrdToFloat(this.thys.dataY[10-2])*3.14159/180),false);
     x = pat[0]-this.radius; y = pat[1];
     return Math.atan2(y,x);
@@ -275,11 +289,33 @@ class CInfo
   {
     return this.players;
   }
+  CreateTelepPulse(xx,yy)
+  {
+    xx = (xx+"").replaceAll(".",",");
+    yy = (yy+"").replaceAll(".",",");
+    sendToAllClients("/RetEmitParticles -1 16 "+xx+" "+yy+" X X");
+  }
+  RemoteDamage(id)
+  {
+    DamageFLOAT(id,GplGet("cyclic_remote_damage")*gameplay[36]);
+  }
   ShotCalculateIfNow(shooter,players,thys)
   {
-    //If multiple shooter
-    if(thys.dataY[3-2]%shooter.frequency==0 && thys.dataY[3-2]!=0)
-      this.ShotCalculate(shooter,players,thys);
+    if(shooter.salvic && thys.dataY[3-2]%250>=175) return;
+    var fram = thys.dataY[19-2] - thys.dataY[17-2];
+    var true_frequency = shooter.frequency;
+
+    //Shooter frequency change (quakes)
+    if(
+      (thys.type==1 && thys.dataY[18-2]==4) ||
+      (thys.type==2 && thys.dataY[18-2]==4) ||
+      (thys.type==3 && thys.dataY[18-2]==4) ||
+      (thys.type==6 && thys.dataY[18-2]==4)
+    ) true_frequency = Math.floor(shooter.frequency*0.67);
+
+    if(true_frequency<1) true_frequency=1;
+    if(shooter.actives[thys.dataY[18-2]]=='1' && fram>shooter.cooldown && (fram-shooter.cooldown)%true_frequency==0)
+      if(shooter.one_time_id<0 || thys.dataY[20-2]%shooter.one_time_id!=0) this.ShotCalculate(shooter,players,thys);
   }
   ShotCalculate(shooter,players,thys)
   {
@@ -304,6 +340,7 @@ class CInfo
     var deviation_angle = (Math.random()-0.5)*2*shooter.precision + best_deviation;
     if(deviation_angle < -shooter.max_deviation) deviation_angle = -2*shooter.max_deviation - deviation_angle;
     if(deviation_angle > shooter.max_deviation) deviation_angle = 2*shooter.max_deviation - deviation_angle;
+    if(shooter.one_time_id>=0) thys.dataY[20-2] *= shooter.one_time_id;
     this.ShotCooked(shooter.angle,shooter.bullet_type,thys,deviation_angle,shooter.radius);
   }
   ShotCooked(delta_angle_rad,btype,thys,deviation_angle,rad)
@@ -312,7 +349,7 @@ class CInfo
     var ly = func.ScrdToFloat(thys.dataY[9-2]);
     var angle = delta_angle_rad + func.ScrdToFloat(thys.dataY[10-2])*3.14159/180;
     var pak = ["?",0];
-    if(btype==9 || btype==10) pak[0]=0.25; else pak[0]=0.35;
+    if(btype==9 || btype==10) pak[0]=GplGet("boss_seeker_speed"); else pak[0]=GplGet("boss_bullet_speed");
     var efwing = func.RotatePoint(pak,angle+deviation_angle,false);
     this.ShotRaw(rad*Math.cos(angle)+thys.deltapos.x+lx,rad*Math.sin(angle)+thys.deltapos.y+ly,efwing[0],efwing[1],btype,thys.identifier);
   }
@@ -358,99 +395,149 @@ class CInfo
   GetShootersList(type,thys)
   {
     var shooters = [];
-    if(true) //All bosses (temporary)
+    if(true)
     {
         if(type==1) //Protector
         {
             shooters = [
-                new CShooter(11, 22.5,60,7.5, 6.5,thys,false, 15),
-                new CShooter(11, 45,60,7.5, 6.5,thys,false, 15),
-                new CShooter(11, 135,60,7.5, 6.5,thys,false, 15),
-                new CShooter(11, 157.5,60,7.5, 6.5,thys,false, 15),
-                new CShooter(11, 202.5,60,7.5, 6.5,thys,false, 15),
-                new CShooter(11, 225,60,7.5, 6.5,thys,false, 15),
-                new CShooter(11, 315,60,7.5, 6.5,thys,false, 15),
-                new CShooter(11, 337.5,60,7.5, 6.5,thys,false, 15),
+              new CShooter(11, 22.5,60,7.5, 7,thys,false, 15, "11011",0,-1, false),
+              new CShooter(11, 45,60,7.5, 7,thys,false, 15, "11011",0,-1, false),
+              new CShooter(11, 135,60,7.5, 7,thys,false, 15, "11011",0,-1, false),
+              new CShooter(11, 157.5,60,7.5, 7,thys,false, 15, "11011",0,-1, false),
+              new CShooter(11, 202.5,60,7.5, 7,thys,false, 15, "11011",0,-1, false),
+              new CShooter(11, 225,60,7.5, 7,thys,false, 15, "11011",0,-1, false),
+              new CShooter(11, 315,60,7.5, 7,thys,false, 15, "11011",0,-1, false),
+              new CShooter(11, 337.5,60,7.5, 7,thys,false, 15, "11011",0,-1, false),
 
-                new CShooter(4, 270,120,7.5, 10,thys,false, 300),
-                new CShooter(9, 0,0,0, 7.5,thys,true, 600),
-                new CShooter(9, 180,0,0, 7.5,thys,true, 600),
+              new CShooter(4, 270,120,7.5, 10,thys,false, 1, "01000",50,2, false),
+              new CShooter(9, 0,0,0, 7.5,thys,true, 40, "00010",1,-1, false),
+              new CShooter(9, 180,0,0, 7.5,thys,true, 40, "00010",1,-1, false),
             ];
         }
         if(type==2) //Adecodron
         {
             shooters = [
-                new CShooter(10, 0,0,0, 7.5,thys,true, 600),
-                new CShooter(10, 90,0,0, 7.5,thys,true, 600),
-                new CShooter(10, 180,0,0, 7.5,thys,true, 600),
-                new CShooter(10, 270,0,0, 7.5,thys,true, 600),
+              new CShooter(10, 0,0,0, 7.5,thys,true, 40, "00010",1,-1, false),
+              new CShooter(10, 90,0,0, 7.5,thys,true, 40, "00010",1,-1, false),
+              new CShooter(10, 180,0,0, 7.5,thys,true, 40, "00010",1,-1, false),
+              new CShooter(10, 270,0,0, 7.5,thys,true, 40, "00010",1,-1, false),
 
-                new CShooter(12, 45,60,7.5, 6.5,thys,false, 20),
-                new CShooter(12, 135,60,7.5, 6.5,thys,false, 20),
-                new CShooter(12, 225,60,7.5, 6.5,thys,false, 20),
-                new CShooter(12, 315,60,7.5, 6.5,thys,false, 20),
-                
-                new CShooter(6, 0,0,0, 6.5,thys,true, 600),
-                new CShooter(6, 20,0,0, 6.5,thys,true, 600),
-                new CShooter(6, 40,0,0, 6.5,thys,true, 600),
-                new CShooter(6, 60,0,0, 6.5,thys,true, 600),
-                new CShooter(6, 80,0,0, 6.5,thys,true, 600),
-                new CShooter(6, 100,0,0, 6.5,thys,true, 600),
-                new CShooter(6, 120,0,0, 6.5,thys,true, 600),
-                new CShooter(6, 140,0,0, 6.5,thys,true, 600),
-                new CShooter(6, 160,0,0, 6.5,thys,true, 600),
-                new CShooter(6, 180,0,0, 6.5,thys,true, 600),
-                new CShooter(6, 200,0,0, 6.5,thys,true, 600),
-                new CShooter(6, 220,0,0, 6.5,thys,true, 600),
-                new CShooter(6, 240,0,0, 6.5,thys,true, 600),
-                new CShooter(6, 260,0,0, 6.5,thys,true, 600),
-                new CShooter(6, 280,0,0, 6.5,thys,true, 600),
-                new CShooter(6, 300,0,0, 6.5,thys,true, 600),
-                new CShooter(6, 320,0,0, 6.5,thys,true, 600),
-                new CShooter(6, 340,0,0, 6.5,thys,true, 600),
+              new CShooter(12, 45,70,7, 8,thys,false, 15, "00100",30,-1, false),
+              new CShooter(12, 135,70,7, 8,thys,false, 15, "00100",30,-1, false),
+              new CShooter(12, 225,70,7, 8,thys,false, 15, "00100",30,-1, false),
+              new CShooter(12, 315,70,7, 8,thys,false, 15, "00100",30,-1, false),
+              
+              new CShooter(6, 0,0,0, 6.5,thys,true, 40, "01000",1,-1, false),
+              new CShooter(6, 20,0,0, 6.5,thys,true, 40, "01000",1,-1, false),
+              new CShooter(6, 40,0,0, 6.5,thys,true, 40, "01000",1,-1, false),
+              new CShooter(6, 60,0,0, 6.5,thys,true, 40, "01000",1,-1, false),
+              new CShooter(6, 80,0,0, 6.5,thys,true, 40, "01000",1,-1, false),
+              new CShooter(6, 100,0,0, 6.5,thys,true, 40, "01000",1,-1, false),
+              new CShooter(6, 120,0,0, 6.5,thys,true, 40, "01000",1,-1, false),
+              new CShooter(6, 140,0,0, 6.5,thys,true, 40, "01000",1,-1, false),
+              new CShooter(6, 160,0,0, 6.5,thys,true, 40, "01000",1,-1, false),
+              new CShooter(6, 180,0,0, 6.5,thys,true, 40, "01000",1,-1, false),
+              new CShooter(6, 200,0,0, 6.5,thys,true, 40, "01000",1,-1, false),
+              new CShooter(6, 220,0,0, 6.5,thys,true, 40, "01000",1,-1, false),
+              new CShooter(6, 240,0,0, 6.5,thys,true, 40, "01000",1,-1, false),
+              new CShooter(6, 260,0,0, 6.5,thys,true, 40, "01000",1,-1, false),
+              new CShooter(6, 280,0,0, 6.5,thys,true, 40, "01000",1,-1, false),
+              new CShooter(6, 300,0,0, 6.5,thys,true, 40, "01000",1,-1, false),
+              new CShooter(6, 320,0,0, 6.5,thys,true, 40, "01000",1,-1, false),
+              new CShooter(6, 340,0,0, 6.5,thys,true, 40, "01000",1,-1, false),
             ];
         }
         if(type==3) //Octogone
         {
             shooters = [
-                new CShooter(7, 0,60,10, 6.5,thys,false, 50),
-                new CShooter(7, 45,60,10, 6.5,thys,false, 50),
-                new CShooter(7, 90,60,10, 6.5,thys,false, 50),
-                new CShooter(7, 135,60,10, 6.5,thys,false, 50),
-                new CShooter(7, 180,60,10, 6.5,thys,false, 50),
-                new CShooter(7, 225,60,10, 6.5,thys,false, 50),
-                new CShooter(7, 270,60,10, 6.5,thys,false, 50),
-                new CShooter(7, 315,60,10, 6.5,thys,false, 50),
+              new CShooter(7, 0,60,10, 6.5,thys,false, 50, "10111",0,-1, false),
+              new CShooter(7, 45,60,10, 6.5,thys,false, 50, "10111",0,-1, false),
+              new CShooter(7, 90,60,10, 6.5,thys,false, 50, "10111",0,-1, false),
+              new CShooter(7, 135,60,10, 6.5,thys,false, 50, "10111",0,-1, false),
+              new CShooter(7, 180,60,10, 6.5,thys,false, 50, "10111",0,-1, false),
+              new CShooter(7, 225,60,10, 6.5,thys,false, 50, "10111",0,-1, false),
+              new CShooter(7, 270,60,10, 6.5,thys,false, 50, "10111",0,-1, false),
+              new CShooter(7, 315,60,10, 6.5,thys,false, 50, "10111",0,-1, false),
 
-                new CShooter(8, 90,60,10, 8.5,thys,false, 500),
-                new CShooter(8, 210,60,10, 8.5,thys,false, 500),
-                new CShooter(8, 330,60,10, 8.5,thys,false, 500),
+              new CShooter(7, 0,60,60, 6.5,thys,true, 31, "01000",0,-1, false),
+              new CShooter(7, 45,60,60, 6.5,thys,true, 28, "01000",0,-1, false),
+              new CShooter(7, 90,60,60, 6.5,thys,true, 33, "01000",0,-1, false),
+              new CShooter(7, 135,60,60, 6.5,thys,true, 27, "01000",0,-1, false),
+              new CShooter(7, 180,60,60, 6.5,thys,true, 30, "01000",0,-1, false),
+              new CShooter(7, 225,60,60, 6.5,thys,true, 34, "01000",0,-1, false),
+              new CShooter(7, 270,60,60, 6.5,thys,true, 32, "01000",0,-1, false),
+              new CShooter(7, 315,60,60, 6.5,thys,true, 29, "01000",0,-1, false),
+
+              new CShooter(8, 90,60,10, 8,thys,false, 1, "00100",30,2, false),
+              new CShooter(8, 210,60,10, 8,thys,false, 1, "00100",30,3, false),
+              new CShooter(8, 330,60,10, 8,thys,false, 1, "00100",30,5, false),
             ];
         }
         if(type==4) //Starandus
         {
             shooters = [
-                new CShooter(5, 0,60,60, 6.5,thys,true, 25),
-                new CShooter(5, 45,60,60, 6.5,thys,true, 21),
-                new CShooter(5, 90,60,60, 6.5,thys,true, 26),
-                new CShooter(5, 135,60,60, 6.5,thys,true, 28),
-                new CShooter(5, 180,60,60, 6.5,thys,true, 24),
-                new CShooter(5, 225,60,60, 6.5,thys,true, 23),
-                new CShooter(5, 270,60,60, 6.5,thys,true, 27),
-                new CShooter(5, 315,60,60, 6.5,thys,true, 22),
+              new CShooter(5, 30,60,12, 6.5,thys,false, 30, "10000",15,-1, false), //Normal
+              new CShooter(5, 60,60,12, 6.5,thys,false, 30, "10000",0,-1, false),
+              new CShooter(5, 120,60,12, 6.5,thys,false, 30, "10000",15,-1, false),
+              new CShooter(5, 150,60,12, 6.5,thys,false, 30, "10000",0,-1, false),
+              new CShooter(5, 210,60,12, 6.5,thys,false, 30, "10000",15,-1, false),
+              new CShooter(5, 240,60,12, 6.5,thys,false, 30, "10000",0,-1, false),
+              new CShooter(5, 300,60,12, 6.5,thys,false, 30, "10000",15,-1, false),
+              new CShooter(5, 330,60,12, 6.5,thys,false, 30, "10000",0,-1, false),
+
+              new CShooter(5, 30,60,60, 6.5,thys,true, 34, "01000",18,-1, false), //Fire
+              new CShooter(5, 60,60,60, 6.5,thys,true, 37, "01000",0,-1, false),
+              new CShooter(5, 120,60,60, 6.5,thys,true, 35, "01000",18,-1, false),
+              new CShooter(5, 150,60,60, 6.5,thys,true, 36, "01000",0,-1, false),
+              new CShooter(5, 210,60,60, 6.5,thys,true, 35, "01000",18,-1, false),
+              new CShooter(5, 240,60,60, 6.5,thys,true, 34, "01000",0,-1, false),
+              new CShooter(5, 300,60,60, 6.5,thys,true, 37, "01000",18,-1, false),
+              new CShooter(5, 330,60,60, 6.5,thys,true, 36, "01000",0,-1, false),
+
+              new CShooter(5, 30,60,60, 6.5,thys,true, 14, "00100",8,-1, false), //Supernova
+              new CShooter(5, 60,60,60, 6.5,thys,true, 17, "00100",0,-1, false),
+              new CShooter(5, 120,60,60, 6.5,thys,true, 15, "00100",8,-1, false),
+              new CShooter(5, 150,60,60, 6.5,thys,true, 16, "00100",0,-1, false),
+              new CShooter(5, 210,60,60, 6.5,thys,true, 15, "00100",8,-1, false),
+              new CShooter(5, 240,60,60, 6.5,thys,true, 14, "00100",0,-1, false),
+              new CShooter(5, 300,60,60, 6.5,thys,true, 17, "00100",8,-1, false),
+              new CShooter(5, 330,60,60, 6.5,thys,true, 16, "00100",0,-1, false),
+
+              new CShooter(16, 45,60,60, 6.5,thys,true, 24, "00010",13,-1, false), //Gravitons
+              new CShooter(16, 90,60,60, 6.5,thys,true, 27, "00010",0,-1, false),
+              new CShooter(16, 135,60,60, 6.5,thys,true, 25, "00010",13,-1, false),
+              new CShooter(16, 180,60,60, 6.5,thys,true, 26, "00010",0,-1, false),
+              new CShooter(16, 225,60,60, 6.5,thys,true, 25, "00010",13,-1, false),
+              new CShooter(16, 270,60,60, 6.5,thys,true, 24, "00010",0,-1, false),
+              new CShooter(16, 315,60,60, 6.5,thys,true, 27, "00010",13,-1, false),
+              new CShooter(16, 360,60,60, 6.5,thys,true, 26, "00010",0,-1, false),
+
+              new CShooter(17, 0,15,15, 5,thys,true, 10, "00001",0,-1, false), //Electrons
+              new CShooter(17, 180,15,15, 5,thys,true, 10, "00001",0,-1, false),
             ];
         }
         if(type==6) //Degenerator
         {
             shooters = [
-                new CShooter(13, 22.5,60,10, 6.5,thys,false, 35),
-                new CShooter(12, 45,60,7.5, 6.5,thys,false, 20),
-                new CShooter(12, 135,60,7.5, 6.5,thys,false, 20),
-                new CShooter(13, 157.5,60,10, 6.5,thys,false, 35),
-                new CShooter(13, 202.5,60,10, 6.5,thys,false, 35),
-                new CShooter(12, 225,60,7.5, 6.5,thys,false, 20),
-                new CShooter(12, 315,60,7.5, 6.5,thys,false, 20),
-                new CShooter(13, 337.5,60,10, 6.5,thys,false, 35),
+              new CShooter(12, 45,60,7.5, 7,thys,false, 15, "11011",0,-1, false),
+              new CShooter(12, 135,60,7.5, 7,thys,false, 15, "11011",0,-1, false),
+              new CShooter(12, 225,60,7.5, 7,thys,false, 15, "11011",0,-1, false),
+              new CShooter(12, 315,60,7.5, 7,thys,false, 15, "11011",0,-1, false),
+
+              new CShooter(13, 22.5,60,10, 7,thys,false, 40, "11011",0,-1, false),
+              new CShooter(13, 157.5,60,10, 7,thys,false, 40, "11011",0,-1, false),
+              new CShooter(13, 202.5,60,10, 7,thys,false, 40, "11011",0,-1, false),
+              new CShooter(13, 337.5,60,10, 7,thys,false, 40, "11011",0,-1, false),
+
+              new CShooter(13, 270,70,70, 7,thys,true, 20, "11011",0,-1, false),
+              new CShooter(9, 0,0,0, 7.5,thys,true, 40, "01000",1,-1, false),
+              new CShooter(9, 180,0,0, 7.5,thys,true, 40, "01000",1,-1, false),
+
+              new CShooter(13, 22.5,20,20, 7,thys,true, 15, "00100",0,-1, false),
+              new CShooter(13, 157.5,20,20, 7,thys,true, 15, "00100",0,-1, false),
+              new CShooter(13, 202.5,20,20, 7,thys,true, 15, "00100",0,-1, false),
+              new CShooter(13, 337.5,20,20, 7,thys,true, 15, "00100",0,-1, false),
+              new CShooter(13, 270,70,70, 7,thys,true, 8, "00100",0,-1, false),
             ];
         }
     }
@@ -613,12 +700,12 @@ function savePlayer(n) {
     plr.upgrades[n],
   ];
   var effect = effTab.join(";\r\n") + ";\r\n";
-  writeF("ServerUniverse/Players/" + plr.nicks[n] + ".se3", effect);
+  writeF(universe_name + "/Players/" + plr.nicks[n] + ".se3", effect);
 }
 function readPlayer(n) {
   var srcTT, i, dd, di, db, du, eff, lngt;
-  if (existsF("ServerUniverse/Players/" + plr.nicks[n] + ".se3"))
-    srcTT = readF("ServerUniverse/Players/" + plr.nicks[n] + ".se3").split("\r\n");
+  if (existsF(universe_name + "/Players/" + plr.nicks[n] + ".se3"))
+    srcTT = readF(universe_name + "/Players/" + plr.nicks[n] + ".se3").split("\r\n");
   else return;
 
   if (!fileReadablePlayer(srcTT)) return;
@@ -664,9 +751,9 @@ function ulamToXY(ulam) {
 }
 function chunkRead(ind) {
   var i, j, eff = seed + "\r\n";
-  if (existsF("ServerUniverse/Asteroids/Generated_" + ind + ".se3"))
+  if (existsF(universe_name + "/Asteroids/Generated_" + ind + ".se3"))
   {
-    var datT = readF("ServerUniverse/Asteroids/Generated_" + ind + ".se3").split("\r\n");
+    var datT = readF(universe_name + "/Asteroids/Generated_" + ind + ".se3").split("\r\n");
     var pom;
 
     try {
@@ -709,7 +796,7 @@ function chunkSave(n) {
     lines[i] = removeEnds(lines[i]);
   }
   eff += lines.join("\r\n") + "\r\n";
-  writeF("ServerUniverse/Asteroids/Generated_" + chunk_names[n] + ".se3", eff);
+  writeF(universe_name + "/Asteroids/Generated_" + chunk_names[n] + ".se3", eff);
 }
 function asteroidIndex(ulam) {
   var xy = ulamToXY(ulam);
@@ -894,19 +981,32 @@ function CookedDamage(pid,dmg)
 }
 function getBulletDamage(type,owner,pid,bll)
 {
-  var artid;
+  var artid,is_bos;
   if(pid==-2) { //unstable boss
     artid = 6;
+    is_bos = true;
   }
-  else if(pid==-1) { //normal boss
+  else if(pid==-1 || pid==-3) { //normal boss
     artid = -41;
+    is_bos = true;
   }
   else { //player
     if(bll.immune.includes(pid+"")) return 0;
     artid = plr.backpack[pid].split(";")[30] - 41;
     if(plr.backpack[pid].split(";")[31]==0) artid = -41;
+    is_bos = false;
   }
-  if(artid!=6 || !bll.is_unstable) return bll.normal_damage;
+  if(artid!=6 || !bll.is_unstable)
+  {
+    if(!is_bos) return bll.normal_damage;
+    else {
+      var damage_modifier = 1;
+      if(bll.type==3) damage_modifier = func.parseFloatU(gameplay[37]);
+      if(bll.type==15) damage_modifier = func.parseFloatU(gameplay[38]);
+      if(bll.type==15 && pid==-3) damage_modifier = 0;
+      return bll.normal_damage*damage_modifier;
+    }
+  }
   else return 0;
 }
 
@@ -1067,18 +1167,11 @@ setInterval(function () { // <interval #2>
             var yc = scrs[j].posCY + func.ScrdToFloat(scrs[j].dataY[9-2]);
             if(func.CollisionLinearCheck(xc,yc,7.5))
             {
-              if(bulletsT[i].type!=3) {
-                DamageBoss(j, getBulletDamage(bulletsT[i].type, bulletsT[i].owner, -1, bulletsT[i]) );
-                destroyBullet(i, ["", bulletsT[i].owner, bulletsT[i].ID, bulletsT[i].age], true);
-                break;
-              }
-              else if(!bulletsT[i].damaged.includes(-l)) {
-                if(scrs[j].type!=6) DamageBoss(j, getBulletDamage(bulletsT[i].type, bulletsT[i].owner, -1, bulletsT[i]) );
-                else DamageBoss(j, getBulletDamage(bulletsT[i].type, bulletsT[i].owner, -2, bulletsT[i]) );
-                bulletsT[i].damaged.push(-l);
-                destroyBullet(i, ["", bulletsT[i].owner, bulletsT[i].ID, bulletsT[i].age], true);
-                break;
-              }
+              if(scrs[j].type==6) DamageBoss(j, getBulletDamage(bulletsT[i].type, bulletsT[i].owner, -2, bulletsT[i]) );
+              else if(scrs[j].type==4) DamageBoss(j, getBulletDamage(bulletsT[i].type, bulletsT[i].owner, -3, bulletsT[i]) );
+              else DamageBoss(j, getBulletDamage(bulletsT[i].type, bulletsT[i].owner, -1, bulletsT[i]) );
+              destroyBullet(i, ["", bulletsT[i].owner, bulletsT[i].ID, bulletsT[i].age], true);
+              break;
             }
           }
         }
@@ -1116,7 +1209,8 @@ setInterval(function () { // <interval #2>
           var sth2 = plr.sHealth[i];
 
           var del = ((sth2-sth1)+"").replaceAll(".",",");
-          sendTo(se3_ws[i],"R "+del+" "+plr.immID[i]+" "+plr.livID[i]); //Medium type message
+          var abl = ((sth2)+"").replaceAll(".",",");
+          sendTo(se3_ws[i],"R "+del+" "+plr.immID[i]+" "+plr.livID[i]+" "+abl); //Medium type message
           
           if(plr.sRegTimer[i]>0)
 	        {
@@ -1283,11 +1377,38 @@ function ToTwo(n) {
 }
 function getTimeSize(n)
 {
-  return 9000;
+  return Math.floor(GplGet("boss_battle_time") * 50);
 }
 function getBossHealth(n,typ)
 {
-  return 100000;
+  var ret = 10000;
+  if(typ==1) {
+      if(n==0) ret = Math.floor(GplGet("boss_hp_protector_1") * 100);
+      if(n==1) ret = Math.floor(GplGet("boss_hp_protector_2") * 100);
+      if(n==2) ret = Math.floor(GplGet("boss_hp_protector_3") * 100);
+  }
+  if(typ==2) {
+      if(n==0) ret = Math.floor(GplGet("boss_hp_adecodron_1") * 100);
+      if(n==1) ret = Math.floor(GplGet("boss_hp_adecodron_2") * 100);
+      if(n==2) ret = Math.floor(GplGet("boss_hp_adecodron_3") * 100);
+  }
+  if(typ==3) {
+      if(n==0) ret = Math.floor(GplGet("boss_hp_octogone_1") * 100);
+      if(n==1) ret = Math.floor(GplGet("boss_hp_octogone_2") * 100);
+      if(n==2) ret = Math.floor(GplGet("boss_hp_octogone_3") * 100);
+  }
+  if(typ==4) {
+      if(n==0) ret = Math.floor(GplGet("boss_hp_starandus_1") * 100);
+      if(n==1) ret = Math.floor(GplGet("boss_hp_starandus_2") * 100);
+      if(n==2) ret = Math.floor(GplGet("boss_hp_starandus_3") * 100);
+  }
+  if(typ==6) {
+      if(n==0) ret = Math.floor(GplGet("boss_hp_degenerator_1") * 100);
+      if(n==1) ret = Math.floor(GplGet("boss_hp_degenerator_2") * 100);
+      if(n==2) ret = Math.floor(GplGet("boss_hp_degenerator_3") * 100);
+  }
+  if(ret<=0) return 1;
+  else return ret;
 }
 function resetScr(i)
 {
@@ -1348,7 +1469,7 @@ function resetScr(i)
 }
 function DamageBoss(i,dmg)
 {
-  if(scrs[i].dataY[2-2]!=2) return;
+  if(scrs[i].dataY[2-2]!=2 || ((scrs[i].behaviour.type-1)==0 && scrs[i].dataY[18-2]==2)) return;
   var actualHealth = scrs[i].dataY[6-2]/100;
   actualHealth -= dmg;
   scrs[i].dataY[6-2] = Math.floor(actualHealth*100);
@@ -1375,7 +1496,8 @@ setInterval(function () {  // <interval #2>
   }
 
   //RPU - Dynamic data
-  eff = "/RPU " + max_players + " ";
+  if(show_positions) eff = "/RPU " + max_players + " ";
+  else eff = ".RPU " + max_players + " ";
   eff += GetRPU(plr.players,lngt) + " ";
   eff += current_tick;
   eff += " X X"
@@ -1465,8 +1587,25 @@ function kick(i) {
 }
 
 //Bullet functions
+function MaxAgeOfPlayerBullet(n)
+{
+  var ret = 0;
+  if(n==1) ret = GplGet("copper_bullet_speed");
+  if(n==2) ret = GplGet("red_bullet_speed");
+  if(n==3) ret = GplGet("unstable_bullet_speed");
+  if(n==14) ret = GplGet("coal_bullet_speed");
+  if(n==15) ret = GplGet("fire_bullet_speed");
+  if(ret==0) ret = 0.001;
+  ret = Math.floor(35/ret) + 1;
+  if(ret>=300) return 300;
+  else if(ret<=1) return 1;
+  else return ret;
+}
 function spawnBullet(tpl,arg,bow)
 {
+  if(tpl.type==1 || tpl.type==2 || tpl.type==3 || tpl.type==14 || tpl.type==15)
+    tpl.max_age = MaxAgeOfPlayerBullet(tpl.type);
+
   if(tpl.type==9 || tpl.type==10)
   {
     tpl.steerPtr = steer_createSeekPointer(tpl.ID);
@@ -2153,6 +2292,11 @@ function immortal(pid)
 
   var bpck = plr.backpack[pid].split(";");
   bpck[31] -= 1;
+  if(bpck[31] == 0)
+  {
+    bpck[30] = 41;
+    bpck[31] += 1;
+  }
   plr.backpack[pid] = bpck.join(";");
 
   if(plr.players[pid]=="0" || plr.players[pid]=="1") return;
@@ -2821,6 +2965,12 @@ wss.on("connection", function connection(ws) {
         fobChange(tgrUlam, tgrPlace, "40");
         sendToAllClients("/RetGeyzerTurn " + tgrUlam + " " + tgrPlace + " X X");
       }
+      if (
+        checkFobChange(tgrUlam, tgrPlace, "41", "-1")
+      ) {
+        fobChange(tgrUlam, tgrPlace, "45");
+        sendToAllClients("/RetGeyzerTurn " + tgrUlam + " " + tgrPlace + " X X");
+      }
     }
     if (arg[0] == "/FobsPing") {
       //FobsPing 1[id]
@@ -2906,6 +3056,7 @@ wss.on("connection", function connection(ws) {
 
       var censured = Censure(plr.players[arg[1]],arg[1],cliLivID);
       plr.players[arg[1]] = censured;
+      sendTo(ws,"/RetDamageBalance " + arg[2] + " " + cliLivID + " " + cliImmID + " X X");
     }
     if (arg[0] == "/Craft") {
       //Craft 1[PlaID] 2[Id1] 3[Co1] 4[Sl1] 5[Id2] 6[Co2] 7[Sl2] 8[IdE] 9[CoE] 10[SlE]
@@ -3019,16 +3170,20 @@ wss.on("connection", function connection(ws) {
 
       var pid=arg[1];
 
-      if(arg[2]=="1")
+      if(arg[2]=="1" || arg[2]=="2")
       {
         var artid = plr.backpack[pid].split(";")[30] - 41;
         if(plr.backpack[pid].split(";")[31]=="0") artid = -41;
 
         var sth1 = plr.sHealth[pid];
 
+        var heal_size;
+        if(arg[2]=="1") heal_size = gameplay[31];
+        if(arg[2]=="2") heal_size = gameplay[39];
+
         var potHHH = func.parseFloatU(plr.upgrades[pid].split(";")[0]) + getProtLevelAdd(artid) + func.parseFloatU(gameplay[26]);
 		    if(potHHH<-50) potHHH = -50; if(potHHH>56.397) potHHH = 56.397;
-		    var heal=0.02*func.parseFloatU(gameplay[31])/(Math.ceil(50*Math.pow(health_base,potHHH))/50);
+		    var heal=0.02*func.parseFloatU(heal_size)/(Math.ceil(50*Math.pow(health_base,potHHH))/50);
         if(heal<0) heal=0;
         
         plr.sHealth[pid] += heal;
@@ -3037,7 +3192,8 @@ wss.on("connection", function connection(ws) {
         var sth2 = plr.sHealth[pid];
 
         var del = ((sth2-sth1)+"").replaceAll(".",",");
-        sendTo(ws,"R "+del+" "+plr.immID[pid]+" "+plr.livID[pid]); //Medium type message
+        var abl = ((sth2)+"").replaceAll(".",",");
+        sendTo(ws,"R "+del+" "+plr.immID[pid]+" "+plr.livID[pid]+" "+abl); //Medium type message
         sendTo(ws,"/RetHeal "+arg[1]+" "+arg[2]+" X X");
       }
     }
@@ -3325,91 +3481,13 @@ function finalTranslate(varN) {
     } else if (lgt == 2) {
       if (psPath[0] == "gameplay") {
         try {
-          //Normal gameplay
-          if (psPath[1] == "turbo_regenerate_multiplier")
-            gameplay[0] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "turbo_use_multiplier")
-            gameplay[1] = func.parseFloatE(jse3Dat[i]) + "";
 
-          if (psPath[1] == "health_level_add")
-            gameplay[26] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "drill_level_add")
-            gameplay[2] = func.parseFloatE(jse3Dat[i]) + "";
+          //Gameplay variable set
+          var gp_num = func.VarNumber(psPath[1],gpl_number);
+          if(gp_num!=-1) {
+            gameplay[gp_num] = func.FilterValue(gp_num,jse3Dat[i])+"";
+          }
 
-          if (psPath[1] == "health_regenerate_cooldown")
-            gameplay[4] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "health_regenerate_multiplier")
-            gameplay[5] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "crash_minimum_energy")
-            gameplay[6] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "crash_damage_multiplier")
-            gameplay[7] = func.parseFloatE(jse3Dat[i]) + "";
-          
-          if (psPath[1] == "spike_damage")
-            gameplay[8] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "copper_bullet_damage")
-            gameplay[3] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "red_bullet_damage")
-            gameplay[27] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "unstable_matter_damage")
-            gameplay[28] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "coal_bullet_damage")
-            gameplay[33] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "fire_bullet_damage")
-            gameplay[34] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "bullet_owner_push")
-            gameplay[30] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "healing_potion_hp")
-            gameplay[31] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "killing_potion_hp")
-            gameplay[35] = func.parseFloatE(jse3Dat[i]) + "";
-
-          if (psPath[1] == "player_normal_speed")
-            gameplay[9] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "player_brake_speed")
-            gameplay[10] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "player_turbo_speed")
-            gameplay[11] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "drill_normal_speed")
-            gameplay[12] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "drill_brake_speed")
-            gameplay[13] = func.parseFloatE(jse3Dat[i]) + "";
-
-          if (psPath[1] == "vacuum_drag_multiplier")
-            gameplay[14] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "all_speed_multiplier")
-            gameplay[15] = func.parseFloatE(jse3Dat[i]) + "";
-
-          //Artefact gameplay
-          if (psPath[1] == "at_protection_health_level_add")
-            gameplay[16] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "at_protection_health_regenerate_multiplier")
-            gameplay[17] = func.parseFloatE(jse3Dat[i]) + "";
-
-          if (psPath[1] == "at_impulse_power_regenerate_multiplier")
-            gameplay[18] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "at_impulse_time")
-            gameplay[19] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "at_impulse_speed")
-            gameplay[20] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "at_impulse_damage")
-            gameplay[29] = func.parseFloatE(jse3Dat[i]) + "";
-
-          if (psPath[1] == "at_illusion_power_regenerate_multiplier")
-            gameplay[21] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "at_illusion_power_use_multiplier")
-            gameplay[22] = func.parseFloatE(jse3Dat[i]) + "";
-
-          if (psPath[1] == "at_unstable_normal_avarage_time")
-            gameplay[23] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "at_unstable_special_avarage_time")
-            gameplay[24] = func.parseFloatE(jse3Dat[i]) + "";
-          if (psPath[1] == "at_unstable_force")
-            gameplay[25] = func.parseFloatE(jse3Dat[i]) + "";
-
-          //2.0 attacker data
-          if (psPath[1] == "boss_damage_multiplier")
-            gameplay[32] = func.parseFloatE(jse3Dat[i]) + "";
         } catch {
           datapackError("Error in variable: " + jse3Var[i]);
         }
@@ -3784,15 +3862,20 @@ function datapackPaste(splitTab) {
     checkDatapackGoodE();
   } catch {
     crash(
-      "Failied loading imported datapack\r\nDelete ServerUniverse/UniverseInfo.se3 file and try again"
+      "Failied loading imported datapack\r\nDelete " + universe_name + "/UniverseInfo.se3 file and try again"
     );
   }
+}
+
+function GplGet(str)
+{
+    return func.parseFloatU(gameplay[func.VarNumber(str,gpl_number)]);
 }
 
 //Start functions
 console.log("-------------------------------");
 
-if (!existsF("ServerUniverse/UniverseInfo.se3")) {
+if (!existsF(universe_name + "/UniverseInfo.se3")) {
   if (existsF("Datapack.jse3"))
     datapackTranslate("NoName~" + readF("Datapack.jse3"));
   else crash("File Datapack.se3 doesn't exists");
@@ -3802,14 +3885,14 @@ if (!existsF("ServerUniverse/UniverseInfo.se3")) {
   uniMiddle = "Server Copy~" + clientDatapacksVar;
   uniVersion = serverVersion;
   writeF(
-    "ServerUniverse/UniverseInfo.se3",
+    universe_name + "/UniverseInfo.se3",
     [uniTime, uniMiddle, uniVersion, ""].join("\r\n")
   );
 
   console.log("Datapack imported: [" + datName + "]");
 } else {
-  var uiSource = readF("ServerUniverse/UniverseInfo.se3").split("\r\n");
-  if (uiSource.length < 3) crash("Error in ServerUniverse/UniverseInfo.se3");
+  var uiSource = readF(universe_name + "/UniverseInfo.se3").split("\r\n");
+  if (uiSource.length < 3) crash("Error in " + universe_name + "/UniverseInfo.se3");
   if (uiSource[2] != serverVersion)
     crash(
       "Loaded universe has a wrong version: " +
@@ -3819,7 +3902,7 @@ if (!existsF("ServerUniverse/UniverseInfo.se3")) {
     );
 
   var dataGet = uiSource[1].split("~");
-  if (dataGet.length < 2) crash("Error in ServerUniverse/UniverseInfo.se3");
+  if (dataGet.length < 2) crash("Error in " + universe_name + "/UniverseInfo.se3");
   datapackPaste(uiSource[1]);
 
   clientDatapacksVar = clientDatapacks();
@@ -3827,21 +3910,21 @@ if (!existsF("ServerUniverse/UniverseInfo.se3")) {
   uniMiddle = "Server Copy~" + clientDatapacksVar;
   uniVersion = serverVersion;
   writeF(
-    "ServerUniverse/UniverseInfo.se3",
+    universe_name + "/UniverseInfo.se3",
     [uniTime, uniMiddle, uniVersion, ""].join("\r\n")
   );
 
   console.log("Datapack loaded");
 }
 
-if (!existsF("ServerUniverse/Seed.se3")) {
+if (!existsF(universe_name + "/Seed.se3")) {
   seed = func.randomInteger(0, 10000000);
-  writeF("ServerUniverse/Seed.se3", seed + "\r\n");
+  writeF(universe_name + "/Seed.se3", seed + "\r\n");
   console.log("New seed generated: [" + seed + "]");
 }
 else {
-  seed = func.parseIntU(readF("ServerUniverse/Seed.se3").split("\r\n")[0]);
-  writeF("ServerUniverse/Seed.se3", seed + "\r\n");
+  seed = func.parseIntU(readF(universe_name + "/Seed.se3").split("\r\n")[0]);
+  writeF(universe_name + "/Seed.se3", seed + "\r\n");
 }
 
 function laggy_comment(nn)
@@ -3853,7 +3936,41 @@ function laggy_comment(nn)
   if(nn>=501) return "\r\nWarning: Too many players! Shut it down! Your device might explode, but of course you can try joining ;)";
 }
 
+//Awake gameplay set
+boss_damages[4] = GplGet("boss_bullet_electron_damage");
+boss_damages[5] = GplGet("boss_bullet_fire_damage");
+boss_damages[6] = GplGet("boss_bullet_spike_damage");
+boss_damages[7] = GplGet("boss_bullet_brainwave_damage");
+boss_damages[9] = GplGet("boss_bullet_rocket_damage");
+boss_damages[10] = GplGet("boss_bullet_spikeball_damage");
+boss_damages[11] = GplGet("boss_bullet_copper_damage");
+boss_damages[12] = GplGet("boss_bullet_red_damage");
+boss_damages[13] = GplGet("boss_bullet_unstable_damage");
+boss_damages[16] = GplGet("boss_bullet_graviton_damage");
+boss_damages[17] = GplGet("boss_bullet_neutronium_damage");
+
+var gsol5a = 50 * Math.floor(GplGet("amethyst_grow_time_min"));
+var gsol5b = 50 * Math.floor(GplGet("amethyst_grow_time_max"));
+var gsol25 = 50 * Math.floor(GplGet("magnetic_alien_grow_time"));
+
+if(gsol5a<=0) gsol5a = 50;
+if(gsol5b<=0) gsol5b = 50;
+if(gsol25<=0) gsol25 = 50;
+
+if(gsol5a > gsol5b)
+{
+  var gsolpom = gsol5a;
+  gsol5a = gsol5b;
+  gsol5b = gsolpom;
+}
+
+growSolid[5] = gsol5a +";"+ gsol5b +";6";
+growSolid[6] = gsol5a +";"+ gsol5b +";7";
+growSolid[25] = gsol25 +";"+ gsol25 +";23";
+
+//Starting ending
 console.log("Server started on version: [" + serverVersion + "]");
+console.log("Universe directory: [" + universe_name + "]");
 console.log("Max players: [" + max_players + "]");
 console.log("Port: [" + connectionOptions.port + "]" + laggy_comment(max_players));
 console.log("-------------------------------");
