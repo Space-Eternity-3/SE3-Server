@@ -12,13 +12,15 @@ const unit = 0.0008;
 const in_arena_range = 37;
 
 //Global variables
-var serverVersion = "Beta 2.0";
-var serverRedVersion = "Beta_2_0";
+var serverVersion = "Beta 2.1";
+var serverRedVersion = "Beta_2_1";
 var clientDatapacksVar = "";
 var seed;
+var biome_memories = new Array(16000);
 var hourHeader = "";
-var gpl_number = 90;
+var gpl_number = 112;
 var max_players = 128;
+var verF;
 
 var boss_damages = [0,0,0,0,-1,-1,-1,-1,0,-1,-1,-1,-1,-1,0,0 ,-1,-1,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
 var other_bullets_colliders = [0,0.14,0.14,0.12,1,0.25,0.25,1.2,1.68,0.92,0.92,0.25,0.25,0.25,0.14,0.08 ,1.68,0.25,0.08,0.08,0.08,0.08,0.08,0.08,0.08,0.08,0.08,0.08,0.08,0.08,0.08,0.08];
@@ -184,6 +186,19 @@ customStructures.fill(""); Object.seal(customStructures);
 typeSet.fill(""); Object.seal(typeSet);
 gameplay.fill(""); Object.seal(gameplay);
 modifiedDrops.fill(""); Object.seal(modifiedDrops);
+
+function Num31ToChar(num) {
+  if (num < 10) return String.fromCharCode(48 + num)+"";
+  return String.fromCharCode(55 + num)+"";
+}
+
+function replaceCharAtIndex(inputStr, index, newChar) {
+  if (index < 0 || index >= inputStr.length) {
+      return inputStr; // Jeśli indeks jest poza zakresem, zwróć oryginalny string
+  }
+
+  return inputStr.slice(0, index) + newChar + inputStr.slice(index + 1);
+}
 
 //Classes
 class CShooter
@@ -896,6 +911,7 @@ function SaveAllNow() {
     lngt = chunk_data.length;
   for (i = 0; i < max_players; i++) if (checkPlayer(i, plr.conID[i])) savePlayer(i);
   for (i = 0; i < lngt; i++) chunkSave(i);
+  writeF(universe_name + "/Biomes.se3", biome_memories.join("\r\n") + "\r\n");
 }
 
 //Save all once per 15 seconds (or less if lags)
@@ -1590,16 +1606,23 @@ function kick(i) {
 function MaxAgeOfPlayerBullet(n)
 {
   var ret = 0;
-  if(n==1) ret = GplGet("copper_bullet_speed");
-  if(n==2) ret = GplGet("red_bullet_speed");
-  if(n==3) ret = GplGet("unstable_bullet_speed");
-  if(n==14) ret = GplGet("coal_bullet_speed");
-  if(n==15) ret = GplGet("fire_bullet_speed");
+  if(n==1) ret = func.parseFloatU(gameplay[45]);
+  if(n==2) ret = func.parseFloatU(gameplay[46]);
+  if(n==3) ret = func.parseFloatU(gameplay[47]);
+  if(n==14) ret = func.parseFloatU(gameplay[49]);
+  if(n==15) ret = func.parseFloatU(gameplay[48]);
   if(ret==0) ret = 0.001;
-  ret = Math.floor(35/ret) + 1;
-  if(ret>=300) return 300;
-  else if(ret<=1) return 1;
-  else return ret;
+        
+  var ret2 = 100;
+  if(n==1) ret2 = Math.floor(35*func.parseFloatU(gameplay[92])/ret) + 1;
+  if(n==2) ret2 = Math.floor(35*func.parseFloatU(gameplay[93])/ret) + 1;
+  if(n==3) ret2 = Math.floor(35*func.parseFloatU(gameplay[96])/ret) + 1;
+  if(n==14) ret2 = Math.floor(35*func.parseFloatU(gameplay[94])/ret) + 1;
+  if(n==15) ret2 = Math.floor(35*func.parseFloatU(gameplay[95])/ret) + 1;
+
+  if(ret2>=10000) return 10000;
+  else if(ret2<=1) return 1;
+  else return ret2;
 }
 function spawnBullet(tpl,arg,bow)
 {
@@ -2508,7 +2531,7 @@ wss.on("connection", function connection(ws) {
               " " +
               plr.backpack[i] +
               " " +
-              seed +
+              seed+"&"+(biome_memories.join("?")) +
               " X X"
           );
           se3_ws[i] = ws;
@@ -3170,7 +3193,7 @@ wss.on("connection", function connection(ws) {
 
       var pid=arg[1];
 
-      if(arg[2]=="1" || arg[2]=="2")
+      if(arg[2]=="1" || arg[2]=="2" || arg[2]=="3")
       {
         var artid = plr.backpack[pid].split(";")[30] - 41;
         if(plr.backpack[pid].split(";")[31]=="0") artid = -41;
@@ -3180,6 +3203,7 @@ wss.on("connection", function connection(ws) {
         var heal_size;
         if(arg[2]=="1") heal_size = gameplay[31];
         if(arg[2]=="2") heal_size = gameplay[39];
+        if(arg[2]=="3") heal_size = "10000";
 
         var potHHH = func.parseFloatU(plr.upgrades[pid].split(";")[0]) + getProtLevelAdd(artid) + func.parseFloatU(gameplay[26]);
 		    if(potHHH<-50) potHHH = -50; if(potHHH>56.397) potHHH = 56.397;
@@ -3217,6 +3241,25 @@ wss.on("connection", function connection(ws) {
       plr.inventory[bpPlaID] = safeCopyI;
       plr.backpack[bpPlaID] = safeCopyB;
       kick(bpPlaID);
+    }
+    if (arg[0] == "/TryInsertBiome") {
+      //TryInsertBiome 1[PlayerID] 2[Ulam] 3[Biome]
+      if (!checkPlayer(arg[1], arg[msl - 2])) return;
+      
+      var ulam = func.parseIntU(arg[2]);
+      var biome = func.parseIntU(arg[3]);
+
+      var ln = Math.floor(ulam / 1000);
+			var id = ulam % 1000;
+			if(ln>=16000)
+			{
+				id += (ln-15999) * 1000;
+				ln = 15999;
+			}
+			while(biome_memories[ln].length <= id)
+				biome_memories[ln] += '-';
+			if(biome_memories[ln][id]=="-") biome_memories[ln] = replaceCharAtIndex(biome_memories[ln], id, Num31ToChar(biome));
+
     }
     if (arg[0] == "/ImJoined") {
       //ImJoined 1[PlayerID] 2[immID] 3[livID]
@@ -3485,7 +3528,7 @@ function finalTranslate(varN) {
           //Gameplay variable set
           var gp_num = func.VarNumber(psPath[1],gpl_number);
           if(gp_num!=-1) {
-            gameplay[gp_num] = func.FilterValue(gp_num,jse3Dat[i])+"";
+            gameplay[gp_num] = func.FilterValue(gp_num,jse3Dat[i]);
           }
 
         } catch {
@@ -3852,7 +3895,7 @@ function datapackPaste(splitTab) {
     for (i = 0; i < 64; i++) fobGenerate[i] = raws[3].split("'")[i];
     for (i = 0; i < 224; i++) typeSet[i] = raws[4].split("'")[i];
     for (i = 0; i < gpl_number; i++) {
-      if (false) gameplay[i] = func.parseIntE(raws[5].split("'")[i]) + "";
+      if (i==105||i==106) gameplay[i] = raws[5].split("'")[i];
       else gameplay[i] = func.parseFloatE(raws[5].split("'")[i]) + "";
     }
     for (i = 0; i < 128; i++) modifiedDrops[i] = raws[6].split("'")[i];
@@ -3875,22 +3918,33 @@ function GplGet(str)
 //Start functions
 console.log("-------------------------------");
 
-if (!existsF(universe_name + "/UniverseInfo.se3")) {
-  if (existsF("Datapack.jse3"))
-    datapackTranslate("NoName~" + readF("Datapack.jse3"));
-  else crash("File Datapack.se3 doesn't exists");
+if (!existsF(universe_name + "/UniverseInfo.se3"))
+{
+  var datapackjse3, defaultjse3 = readF("server_technicals/DefaultDatapack.jse3");
+  if(existsF("Datapack.jse3"))
+  {
+    datapackjse3 = readF("Datapack.jse3");
+    datapackTranslate("NoName~" + datapackjse3);
+  }
+  else crash("File Datapack.se3 doesn't exist");
+
+  if(datapackjse3==defaultjse3) verF = "DEFAULT";
+  else verF = "Custom Data";
 
   clientDatapacksVar = clientDatapacks();
   uniTime = 0;
-  uniMiddle = "Server Copy~" + clientDatapacksVar;
+  uniMiddle = verF + "~" + clientDatapacksVar;
   uniVersion = serverVersion;
   writeF(
     universe_name + "/UniverseInfo.se3",
     [uniTime, uniMiddle, uniVersion, ""].join("\r\n")
   );
 
-  console.log("Datapack imported: [" + datName + "]");
-} else {
+  if(verF=="Custom Data" && datName=="DEFAULT") console.log("Datapack imported: [CUSTOM]");
+  else console.log("Datapack imported: [" + datName + "]");
+}
+else
+{
   var uiSource = readF(universe_name + "/UniverseInfo.se3").split("\r\n");
   if (uiSource.length < 3) crash("Error in " + universe_name + "/UniverseInfo.se3");
   if (uiSource[2] != serverVersion)
@@ -3898,7 +3952,10 @@ if (!existsF(universe_name + "/UniverseInfo.se3")) {
       "Loaded universe has a wrong version: " +
         uiSource[2] +
         " != " +
-        serverVersion
+        serverVersion +
+        "\r\nYou can update your universe by removing file " + universe_name + "/UniverseInfo.se3" +
+        "\r\nBe sure that file Datapack.jse3 contains a default datapack before updating." +
+        "\r\nNote that universe updating is supported only when updating Beta 2.1 or newer universes\r\nand only when they use a default datapack."
     );
 
   var dataGet = uiSource[1].split("~");
@@ -3907,7 +3964,7 @@ if (!existsF(universe_name + "/UniverseInfo.se3")) {
 
   clientDatapacksVar = clientDatapacks();
   uniTime = 0;
-  uniMiddle = "Server Copy~" + clientDatapacksVar;
+  uniMiddle = uiSource[1];
   uniVersion = serverVersion;
   writeF(
     universe_name + "/UniverseInfo.se3",
@@ -3917,6 +3974,7 @@ if (!existsF(universe_name + "/UniverseInfo.se3")) {
   console.log("Datapack loaded");
 }
 
+//Seed read
 if (!existsF(universe_name + "/Seed.se3")) {
   seed = func.randomInteger(0, 10000000);
   writeF(universe_name + "/Seed.se3", seed + "\r\n");
@@ -3925,6 +3983,16 @@ if (!existsF(universe_name + "/Seed.se3")) {
 else {
   seed = func.parseIntU(readF(universe_name + "/Seed.se3").split("\r\n")[0]);
   writeF(universe_name + "/Seed.se3", seed + "\r\n");
+}
+
+//Biome memories read
+var dii;
+for(dii=0;dii<16000;dii++) biome_memories[dii] = "";
+
+if (existsF(universe_name + "/Biomes.se3")) {
+  var rtr = readF(universe_name + "/Biomes.se3").split("\r\n");
+  for(dii=0;(dii<16000 && dii<rtr.length);dii++)
+    biome_memories[dii] = rtr[dii];
 }
 
 function laggy_comment(nn)

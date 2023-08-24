@@ -103,6 +103,28 @@ class cfun
             "boss_hp_degenerator_1:+", //87
             "boss_hp_degenerator_2:+", //88
             "boss_hp_degenerator_3:+", //89
+            "cyclic_star_time:+", //90
+            "cyclic_starandus_geyzer_time:+", //91
+            "copper_bullet_defrange:+", //92
+            "red_bullet_defrange:+", //93
+            "coal_bullet_defrange:+", //94
+            "fire_bullet_defrange:+", //95
+            "unstable_bullet_defrange:+", //96
+            "copper_bullet_cooldown:+", //97
+            "red_bullet_cooldown:+", //98
+            "coal_bullet_cooldown:+", //99
+            "fire_bullet_cooldown:+", //100
+            "unstable_bullet_cooldown:+", //101
+            "impulse_cooldown:+", //102
+            "lava_geyzer_force_multiplier:*", //103
+            "lava_geyzer_damage:+", //104
+            "treasure_loot:s", //105
+            "dark_treasure_loot:s", //106
+            "at_unstable_power_regenerate_multiplier:+", //107
+	        "at_unstable_power_normal_eat:+", //108
+	        "at_unstable_power_special_eat:+", //109
+	        "at_unstable_power_killpot_give:+", //110
+	        "at_unstable_max_unstabling_deviation:+", //111
         ];
     }
 
@@ -269,9 +291,18 @@ class cfun
     FilterValue(n,value)
     {
         var spl = this.gpl_info[n].split(":");
-        var parsed = this.parseFloatE(value);
-        if(parsed<0 && spl[1]=="+") parsed*=-1;
-        return parsed;
+        if(spl[1]!="s") {
+            var parsed = this.parseFloatE(value);
+            if(parsed<0 && spl[1]=="+") parsed*=-1;
+            return parsed+"";
+        }
+        else {
+            var ret="", str=value+"";
+            var i,lngt=str.length;
+            for(i=0;i<lngt;i++)
+                if(["0","1","2","3","4","5","6","7","8","9","-"].includes(str[i])) ret+=str[i];
+            return ret;
+        }
     }
 }
 class CLinearPreset
