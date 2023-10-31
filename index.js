@@ -2065,6 +2065,7 @@ function drillGet(det) {
 
   for (i = 0; i * 3 + 2 < lngt; i++) {
     if (rnd >= ltdt[i * 3 + 1] && rnd <= ltdt[i * 3 + 2]) return ltdt[i * 3];
+    else return 0; //must be here to fix Beta 2.1 driller bug
   }
   return 0;
 }
