@@ -10,7 +10,9 @@ serverProcess.on("spawn", () => {
         const ws = new WebSocket(`ws://localhost:${port}`);
 
         ws.on("open", function open() {
-            console.log("Connection successful!");
+            console.log("Connection successful! ✔️");
+
+            serverProcess.kill();
             process.exit(0);
         });
     }, 5000);

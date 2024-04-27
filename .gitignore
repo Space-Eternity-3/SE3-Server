@@ -126,5 +126,7 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
-# other
+# Server
 ServerUniverse/
+config.json
+authConfig.json

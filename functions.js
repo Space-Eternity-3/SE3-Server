@@ -1,7 +1,125 @@
 //String functions
 String.prototype.replaceAll = function replaceAll(search, replace) {
     return this.split(search).join(replace);
-  };
+};
+
+class CParsing
+{
+    /*
+        C - checker
+        U - 0 maker
+        E - thrower
+    */
+
+    //Validation methods
+    IntC(s)
+    {
+        try{ this.IntE(s); }
+        catch { return false; }
+        return true;
+    }
+    FloatC(s)
+    {
+        try{ this.FloatE(s); }
+        catch { return false; }
+        return true;
+    }
+
+    //Safe 0 methods
+    IntU(s)
+    {
+        let ret = 0;
+        try{ ret = this.IntE(s); } catch {}
+        return ret;
+    }
+    FloatU(s)
+    {
+        let ret = 0;
+        try{ ret = this.FloatE(s); } catch {}
+        return ret;
+    }
+
+    //Core error methods
+    IntE(s)
+    {
+        s=s+"";
+        try{
+            if(s=="") throw "error";
+            if(s.length > 256) throw "error";
+            let i=0, lngt = s.length, dl = ('0').charCodeAt(0), cn;
+            let sum = 0;
+            let minus = s[0]=='-';
+            if(minus) i++;
+            for(;i<lngt;i++)
+            {
+                cn = s[i].charCodeAt(0) - dl;
+                if(cn<0 || cn>9) throw "error";
+                sum *= 10; sum -= cn;
+            }
+            if(!minus) sum *= -1;
+            if(sum<-2147483648 || sum>2147483647) throw "error";
+            return sum;
+        }
+        catch {
+            throw "Could not parse string to int: "+s;
+        }
+    }
+    FloatE(s)
+    {
+        s=s+"";
+        try{
+            if(s=="") throw "error";
+            if(s.length > 256) throw "error";
+            let i=0, lngt = s.length, dl = ('0').charCodeAt(0), cn;
+            let sum = 0, mn = 1;
+            let minus = s[0]=='-';
+            if(minus) i++;
+
+            let mode = 0; // 0 - before sep, 1 - after sep, 2 - exponent
+            let exp_str = "";
+            for(;i<lngt;i++)
+            {
+                if(mode<=1)
+                {
+                    if(mode==0 && (s[i]=='.' || s[i]==','))
+                    {
+                        mode = 1;
+                        continue;
+                    }
+                    if(s[i]=='e' || s[i]=='E')
+                    {
+                        mode = 2;
+                        continue;
+                    }
+
+                    cn = (s[i]).charCodeAt(0) - dl;
+                    if(cn<0 || cn>9) throw "error";
+                    if(mode==0) sum *= 10; else mn /= 10;
+                    sum += mn*cn;
+                }
+                else exp_str += s[i];
+            }
+
+            if(mode==2)
+            {
+                let exp = this.IntE(exp_str.substring(1));
+                if(exp_str[0]=='-') exp *= -1;
+                else if(exp_str[0]!='+') throw "error";
+                sum *= Math.pow(10,exp);
+            }
+
+            if(sum > Math.pow(10,32)) sum = Math.pow(10,32);
+            if(sum < Math.pow(10,-32)) return 0;
+
+            if(minus) sum *= -1;
+            return sum;
+        }
+        catch {
+            throw "Could not parse string to float: "+s;
+        }
+    }
+}
+let Parsing = new CParsing();
 
 //Classes
 class cfun
@@ -46,12 +164,12 @@ class cfun
             "bullet_owner_push:*", //30
             "healing_potion_hp:+", //31
             "boss_damage_multiplier:+", //32
-            "coal_bullet_damage:+", //33
+            "wind_bullet_damage:+", //33
             "fire_bullet_damage:+", //34
             "killing_potion_hp:+", //35
             "cyclic_damage_multiplier:+", //36
-            "boss_unstable_effectivity:+", //37
-            "boss_fire_effectivity:+", //38
+            "boss_fire_cycles:+", //37
+            "boss_fire_damage:+", //38
             "blank_potion_hp:+", //39
             "stone_geyzer_force_multiplier:*", //40
             "magnetic_geyzer_force_multiplier:*", //41
@@ -62,7 +180,7 @@ class cfun
             "red_bullet_speed:*", //46
             "unstable_bullet_speed:*", //47
             "fire_bullet_speed:*", //48
-            "coal_bullet_speed:*", //49
+            "wind_bullet_speed:*", //49
             "boss_bullet_speed:+", //50
             "boss_seeker_speed:+", //51
             "cyclic_fire_damage:+", //52
@@ -107,12 +225,12 @@ class cfun
             "cyclic_starandus_geyzer_time:+", //91
             "copper_bullet_defrange:+", //92
             "red_bullet_defrange:+", //93
-            "coal_bullet_defrange:+", //94
+            "wind_bullet_defrange:+", //94
             "fire_bullet_defrange:+", //95
             "unstable_bullet_defrange:+", //96
             "copper_bullet_cooldown:+", //97
             "red_bullet_cooldown:+", //98
-            "coal_bullet_cooldown:+", //99
+            "wind_bullet_cooldown:+", //99
             "fire_bullet_cooldown:+", //100
             "unstable_bullet_cooldown:+", //101
             "impulse_cooldown:+", //102
@@ -125,6 +243,23 @@ class cfun
 	        "at_unstable_power_special_eat:+", //109
 	        "at_unstable_power_killpot_give:+", //110
 	        "at_unstable_max_unstabling_deviation:+", //111
+            "upg_1_item:+", //112
+            "upg_1_cost:+", //113
+            "upg_2_item:+", //114
+            "upg_2_cost:+", //115
+            "upg_3_item:+", //116
+            "upg_3_cost:+", //117
+            "upg_4_item:+", //118
+            "upg_4_cost:+", //119
+            "upg_5_item:+", //120
+            "upg_5_cost:+", //121
+            "wind_owner_push:*", //122
+	        "wind_boss_push:*", //123
+            "wind_victim_push:*", //124
+            "metal_treasure_loot:s", //125
+            "soft_treasure_loot:s", //126
+            "hard_treasure_loot:s", //127
+            "at_illusion_speed_multiplier:*", //128
         ];
     }
 
@@ -321,5 +456,5 @@ class CLinearPreset
 let func = new cfun();
 
 module.exports = {
-    func
+    func, Parsing
 };

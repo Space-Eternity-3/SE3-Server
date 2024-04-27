@@ -1,16 +1,17 @@
 {
   "name": "se3-server",
-  "version": "3.2.0",
+  "version": "Beta-2.2",
   "main": "index.js",
   "scripts": {
-    "start": "node .",
+    "start": "npm start",
     "test": "node test"
   },
   "author": {
     "name": "Kamiloso",
-    "url": "https://github.com/Kamiloso"
+    "email": "kamiloso.skoposo@gmail.com"
   },
   "dependencies": {
-    "ws": "^8.13.0"
+    "readline-sync": "^1.4.10",
+    "ws": "^8.16.0"
   }
 }
