@@ -1,6 +1,6 @@
 {
   "name": "se3-server",
-  "version": "Beta-2.2",
+  "version": "Beta-2.2b",
   "main": "index.js",
   "scripts": {
     "start": "npm start",
@@ -12,6 +12,6 @@
   },
   "dependencies": {
     "readline-sync": "^1.4.10",
-    "ws": "^8.16.0"
+    "ws": "^8.17.0"
   }
 }

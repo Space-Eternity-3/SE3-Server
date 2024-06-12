@@ -1366,6 +1366,8 @@ class WorldData
                 d_dont_update_bosbul = true;
                 WorldData.UpdateFob(i,gen);
             }
+
+            Bosbul.UpdateFobColliders(d_ulam);
         }
     }
     
@@ -4312,7 +4314,7 @@ function CheckForLocal(what,pos)
             if(["wall","sphere","piston"].includes(obj.obj) && obj.type==drill_type) return true;
             if(obj.obj == "asteroid" && !obj.hidden) {
                 WorldData.Load(obj.ulam);
-                if(WorldData.GetType()==drill_type) return true;
+                if(WorldData.GetType()%16==drill_type) return true;
             }
         }
     }}
