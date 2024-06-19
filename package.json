@@ -12,6 +12,6 @@
   },
   "dependencies": {
     "readline-sync": "^1.4.10",
-    "ws": "^8.17.0"
+    "ws": "^8.17.1"
   }
 }
