@@ -66,9 +66,12 @@ const default_config = {
   "keep_inventory": false,
 	"show_positions": true,
   "display_full_date": false,
+  "disable_chat": false,
+  "save_all_on_every_disconnect": true,
 	"require_se3_account": false,
   "authorization_waiting_time": 15,
   "max_dict_size": 128,
+  "target_packet_frequency": 60,
   "max_active_bosses": 16,
 	"whitelist_enabled": false,
 	"whitelist": [],
@@ -81,9 +84,15 @@ const default_config = {
     "max_interaction_range": 150,
     "max_worldgen_range": 250,
     "max_player_updates_per_3_seconds": 180,
-    "max_messages_per_second": 1200,
     "allow_everywhere_spawn": false
-	}
+	},
+  "boss_bullets_collide_with": {
+    "terrain_asteroids": false,
+    "terrain_fobs": false,
+    "structure_asteroids": true,
+    "structure_fobs": true,
+    "other_objects": true
+  }
 };
 if(!existsF("./config.json")) {
   writeF("config.json",JSON.stringify(default_config,null,2));
@@ -219,14 +228,14 @@ const unit = 0.0008;
 const in_arena_range = 37;
 
 //Global variables
-var serverVersion = "Beta 2.2";
-var serverRedVersion = "Beta_2_2";
+var serverVersion = "Release 2.3";
+var serverRedVersion = "Release_2_3";
 var clientDatapacksVar = "";
 var seed;
 var biome_memories = new Array(16000).fill("");
 var biome_memories_state = new Array(16000).fill(0);
 var hourHeader = "";
-var gpl_number = 129;
+var gpl_number = 133;
 var max_players = 10;
 var verF;
 var connectionAddress = "IP or DNS + port";
@@ -257,7 +266,7 @@ var se3_wsS = new Array(max_players);
 se3_ws.fill(""); Object.seal(se3_ws);
 se3_wsS.fill(""); Object.seal(se3_wsS);
 
-const MsgMap = new Map();
+let TreasureFrame = 0;
 
 var memTemplate = {
   nicks: "0",
@@ -274,6 +283,7 @@ const give_array = [];
 
 function TreasureDrop(str)
 {
+  str = str.split('+')[0];
   try {
       var marray = [];
       var i,j,rander=func.randomInteger(0,9999);
@@ -286,6 +296,25 @@ function TreasureDrop(str)
       }
     } catch { return "8;1"; }
     return "8;1";
+}
+
+function FindTreasureInLocation(treasureStrings, locationId) {
+  for (let i = 0; i < treasureStrings.length; i++) {
+      let treasureString = treasureStrings[i];
+      let parts = treasureString.split('+');
+
+      if (parts.length < 2) continue;
+
+      let locationFragment = parts[1];
+      let locationIds = locationFragment.split('-');
+
+      for (let id of locationIds) {
+          if (id === locationId.toString()) {
+              return i;
+          }
+      }
+  }
+  return -1;
 }
 
 function getAllSuchFiles(folderPath,ext) {
@@ -626,6 +655,7 @@ class CObjectInfo
         this.size1 = 0;
         this.size2 = 0;
         this.hidden = false;
+        this.instant = true;
         this.fobcode = "";
 
         //Animations
@@ -1094,7 +1124,7 @@ class Universe
         let key_words = [
             "summon",
             "move","rotate","reset",
-            "setbiome","hide","steal",
+            "setbiome","hide","instant","steal",
             "setanimator","animate",
             "move$","rotate$","reset$"
         ];
@@ -1197,6 +1227,10 @@ class Universe
                 {
                     if(Build[H].obj!="asteroid") continue;
                     Build[H].hidden = true;
+                }
+                if(arg[4]=="instant")
+                {
+                    Build[H].instant = true;
                 }
                 if(arg[4]=="steal")
                 {
@@ -1357,7 +1391,8 @@ class WorldData
                 }
             }
             
-            //Generate type and fobs
+            //Generate type and fobs & T-base proof
+            let T_bases = 0, D_bases = 0;
             WorldData.UpdateType(type);
             for(i=1;i<=size*2;i++)
             {
@@ -1365,6 +1400,33 @@ class WorldData
                 if(gen==-1) gen = Deterministics.CalculateFromString(fobGenerate[type], 20*((d_ulam + Generator.seed) % 1000000)+i);
                 d_dont_update_bosbul = true;
                 WorldData.UpdateFob(i,gen);
+                if(gen==81) T_bases++;
+                if(gen==82) D_bases++;
+            }
+            if(T_bases==0)
+            {
+                let fob_gens = fobGenerate[type].split(";");
+                for(i=0;3*i<fob_gens.length;i++) if(fob_gens[3*i]=="81")
+                {
+                    let I = Deterministics.Random10e2((d_ulam + Generator.seed) % 1000000) % (size*2) + 1;
+                    d_dont_update_bosbul = true;
+                    WorldData.UpdateFob(I,81);
+                    break;
+                }
+            }
+
+            //D-base diamond probability
+            for(i=1;i<=size*2;i++)
+            {
+                if(D_bases <= 1) break;
+                if(WorldData.GetFob(i)==82)
+                {
+                    let diamonded_chance = Parsing.FloatU(gameplay[132]);
+                    if((Deterministics.Random10e4((d_ulam + Generator.seed + 153*i) % 1000000) + 1) / 10000 <= diamonded_chance) {
+                        WorldData.UpdateNbt(i,0,1);
+                        D_bases--;
+                    }
+                }
             }
 
             Bosbul.UpdateFobColliders(d_ulam);
@@ -1427,6 +1489,19 @@ class WorldData
     {
         if((data>=0 && data<=63) || data==1024) chunk_data[d0][d1][0] = data+"";
         else chunk_data[d0][d1][0] = "";
+    }
+
+    //Other methods
+    static GetCountOf(data,nbt1)
+    {
+        let ret_count = 0;
+        for(let i=1;i<=20;i++)
+        {
+            if(WorldData.GetFob(i) == data)
+            if(WorldData.GetNbt(i,0) == nbt1 || nbt1 == -1)
+                ret_count++;
+        }
+        return ret_count;
     }
 
     //Private methods
@@ -1632,7 +1707,7 @@ class CBosbulCollider
       if ([23, 53].includes(num)) { RX = 1.4; RY = 3; OF = 0.5; } // bigger aliens
       if ([1].includes(num)) { RX = 1.15; RY = 1.5; OF = 0; } // stone with crystals
       if ([34, 36].includes(num)) { RX = 0.4; RY = 2.3; OF = 0.5; } // drills
-      if ([35, 77].includes(num)) { RX = 0.5; RY = 3; OF = 0.5; } // magnetic lamp & copper diode
+      if ([35, 77, 85].includes(num)) { RX = 0.5; RY = 3; OF = 0.5; } // magnetic lamp & copper diodes
       if ([54].includes(num)) { RX = 1; RY = 2.2; OF = 0.5; } // bone
       if ([51].includes(num)) { RX = 1.4; RY = 2; OF = 0.5; } // metal piece
       if ([29, 69].includes(num)) { RX = 1.4; RY = 3.6; OF = 1; } // tombs
@@ -1647,6 +1722,10 @@ class CBosbulCollider
       if ([21, 52].includes(num)) { RX = 1.4; RY = 2.4; OF = 1; } // storages
       if ([15].includes(num)) { RX = 1.8; RY = 8; OF = 3.7; } // copper chimney
       if ([76].includes(num)) { RX = 1.4; RY = 4; OF = 1.6; } // small copper chimney
+      if ([84].includes(num)) { RX = 1.4; RY = 2.2; OF = 1; } // micro bedrock chimney
+      if ([80,83].includes(num)) { RX = 1.4; RY = 1.4; OF = 0; } // cogs
+      if ([81].includes(num)) { RX = 1.8; RY = 1.5; OF = 0; } // treasure base (only empty, purposeful)
+      if ([82].includes(num)) { RX = 1.4; RY = 1.7; OF = 0; } // diamond base (only empty, purposeful)
 
       const dXY = func.RotatePoint([0, OF], this.ColliderDefault.angle);
 
@@ -1691,15 +1770,20 @@ class Bosbul
               {
                   if(obj.obj === "asteroid")
                   {
-                      if (!obj.hidden) Build.set("ast_" + obj.ulam, new CBosbulCollider(obj, -1));
-                      for (let i = 0; i < obj.size * 2; i++)
-                          Build.set("fob_" + obj.ulam + "_" + i, new CBosbulCollider(obj, i));
+                      let from_seon = obj.ulam % 2 == 0;
+                      if((from_seon && config.boss_bullets_collide_with.structure_asteroids) || (!from_seon && config.boss_bullets_collide_with.terrain_asteroids))
+                          if (!obj.hidden)
+                              Build.set("ast_" + obj.ulam, new CBosbulCollider(obj, -1));
+                      if((from_seon && config.boss_bullets_collide_with.structure_fobs) || (!from_seon && config.boss_bullets_collide_with.terrain_fobs))
+                          for (let i = 0; i < obj.size * 2; i++)
+                              Build.set("fob_" + obj.ulam + "_" + i, new CBosbulCollider(obj, i));
                       this.UpdateFobCollidersInDictionary(Build, obj.ulam);
                   }
                   else if (["sphere", "star", "monster", "wall", "piston"].includes(obj.obj))
                   {
                       const random_key = Math.floor(Math.random() * 1000000000);
-                      Build.set(random_key, new CBosbulCollider(obj, -1));
+                      if(config.boss_bullets_collide_with.other_objects)
+                          Build.set(random_key, new CBosbulCollider(obj, -1));
                   }
               }
 
@@ -1749,8 +1833,8 @@ class Bosbul
 
 class CPlayer {
   constructor(pid) {
-    this.Reset();
     this.gpid = pid;
+    this.Reset();
     this.NextDropsT = [[],[],[],[],[]];
     for(var i=0;i<4;i++) {
       this.NextDropsT[0].push(TreasureDrop(gameplay[105]));
@@ -1774,6 +1858,11 @@ class CPlayer {
     this.ctrlPower = 0;
     this.powerRegenBlocked = false;
     this.periodic = {};
+    this.shield_time = 0;
+    this.green_time = 0;
+    this.previous_position = null;
+    this.velocity_speculation = [0,0];
+    sendToAllPlayers("/RetShieldVisual "+this.gpid+" F X X");
   }
   DataImport(rsp_x,rsp_y,ctrl_power) {
     this.Reset();
@@ -1848,6 +1937,20 @@ class CPlayer {
     if(lv[0]==null) lv[0] = Date.now() + lv[4];
     lv[1]++;
     return (this.periodic[per_type][1] <= this.periodic[per_type][3]);
+  }
+  SetVirtualShield(new_value,shield_type)
+  {
+    if(shield_type=="orange")
+    {
+      if(new_value > this.shield_time)
+        this.shield_time = new_value;
+    }
+    if(shield_type=="green")
+    {
+      if(new_value > this.green_time)
+        this.green_time = new_value;
+      sendToAllPlayers("/RetShieldVisual "+this.gpid+" T X X");
+    }
   }
 }
 
@@ -2001,13 +2104,37 @@ function CharToNum31(ch)
 
 function replaceCharAtIndex(inputStr, index, newChar) {
   if (index < 0 || index >= inputStr.length) {
-      return inputStr; // Jeśli indeks jest poza zakresem, zwróć oryginalny string
+      return inputStr;
   }
 
   return inputStr.slice(0, index) + newChar + inputStr.slice(index + 1);
 }
 
 //Classes
+class TempInfo { //written by ChatGPT
+  constructor() {
+      this.elements = new Map();
+  }
+  addElement(value, lifespan) {
+      this.elements.set(value, lifespan);
+  }
+  makeTick() {
+      for (let [value, lifespan] of this.elements) {
+          lifespan -= 1;
+          if (lifespan <= 0) {
+              this.elements.delete(value);
+          } else {
+              this.elements.set(value, lifespan);
+          }
+      }
+  }
+  getElements() {
+      return Array.from(this.elements.keys());
+  }
+}
+
+const Fob81Infos = new TempInfo();
+
 class CShooter
 {
   constructor(bul_typ,angl_deg,deviat_deg,precis_deg,rad,ths,alway,freq,activess,cld,otid,slvc) {
@@ -2750,11 +2877,11 @@ function HealFLOAT(pid,hp)
 function DamageFLOAT(pid,dmg)
 {
   dmg = Parsing.FloatU(dmg);
-  if(dmg>0 && plr.players[pid].split(";").length!=1 && plr.connectionTime[pid]>=50)
+  if(dmg>0 && plr.players[pid].split(";").length!=1 && plr.connectionTime[pid]>=50 && plr.pclass[pid].shield_time==0 && plr.pclass[pid].green_time==0)
   {
     var artid = plr.backpack[pid].split(";")[30] - 41;
     if(plr.backpack[pid].split(";")[31]=="0") artid = -41;
-    if(Parsing.FloatU(plr.players[pid].split(";")[5].split("&")[1])%25==2) return;
+    //if(Parsing.FloatU(plr.players[pid].split(";")[5].split("&")[1])%25==2) return; // god mode spotted and disabled
     var potHHH = Parsing.FloatU(plr.upgrades[pid].split(";")[0]) + getProtLevelAdd(artid) + Parsing.FloatU(gameplay[26]);
 		if(potHHH<-50) potHHH = -50; if(potHHH>56.397) potHHH = 56.397;
 		dmg=0.02*dmg/(Math.ceil(50*Math.pow(health_base,potHHH))/50);
@@ -2884,7 +3011,7 @@ function GetReducedState(scr)
 
 //HUB INTERVAL <interval #0>
 var date_before = Date.now();
-var date_start = Date.now();
+var date_start = date_before;
 var time_loan = 0;
 setInterval(function () { // <interval #2>
   while(Date.now() > date_before)
@@ -2925,8 +3052,6 @@ setInterval(function () { // <interval #2>
         if (AlienDatabase[vrb][1] == 0)
           delete AlienDatabase[vrb];
       }
-
-      MsgMap.clear();
     }
 
     //LAG PREVENTING
@@ -3049,13 +3174,15 @@ setInterval(function () { // <interval #2>
             {
               if(bullet_air_consistence[bulletsT[i].type]==0) {
                 if( DamageFLOAT(j, getBulletDamage(j, bulletsT[i]) ) != "K")
-                  sendTo(se3_ws[j],"/RetDamageUsing "+bulletsT[i].type+" "+bul_vp+" X "+plr.livID[j]);
+                  if(!bulletsT[i].immune.includes(j+""))
+                    sendTo(se3_ws[j],"/RetDamageUsing "+bulletsT[i].type+" "+bul_vp+" X "+plr.livID[j]);
                 destroyBullet(i, ["", bulletsT[i].owner, bulletsT[i].ID, bulletsT[i].age], false);
                 break;
               }
               else if(!bulletsT[i].damaged.includes(j)) {
                 if( DamageFLOAT(j, getBulletDamage(j, bulletsT[i]) ) != "K")
-                  sendTo(se3_ws[j],"/RetDamageUsing "+bulletsT[i].type+" "+bul_vp+" X "+plr.livID[j]);
+                  if(!bulletsT[i].immune.includes(j+""))
+                    sendTo(se3_ws[j],"/RetDamageUsing "+bulletsT[i].type+" "+bul_vp+" X "+plr.livID[j]);
                 bulletsT[i].damaged.push(j);
               }
             }
@@ -3135,11 +3262,17 @@ setInterval(function () { // <interval #2>
         var bpckArray = plr.backpack[i].split(";");
         var loc_artid = Parsing.IntU(bpckArray[30]) - 41;
         if(Parsing.IntU(bpckArray[31]) < 1) loc_artid = -42;
-        if(plr.connectionTime[i] > 50 && plr.pclass[i].unstable_pulses_available < 5 && loc_artid==6) {
+        if(plr.connectionTime[i] > 50 && plr.pclass[i].unstable_pulses_available < 5 && loc_artid==6 && plr.pclass[i].green_time==0) {
           if(func.randomInteger(0,unstable_sprobability-1)==0) {
             plr.pclass[i].unstable_pulses_available++;
             sendTo(se3_ws[i],"/RetUnstablePulse X X");
           }
+        }
+        if(plr.pclass[i].shield_time > 0) plr.pclass[i].shield_time--;
+        if(plr.pclass[i].green_time > 0) {
+          plr.pclass[i].green_time--;
+          if(plr.pclass[i].green_time == 0)
+            sendToAllPlayers("/RetShieldVisual "+i+" F X X");
         }
     }
 
@@ -3329,6 +3462,65 @@ setInterval(function () { // <interval #2>
       }
     }
 
+    if((date_before-date_start) % 300 == 0) //precisely 3.(3) times per second, every 15 frames
+    {
+      let infos = Fob81Infos.getElements();
+      var i,lngt = infos.length;
+      var NbtChanges = [];
+
+      TreasureFrame++;
+    
+      if(TreasureFrame % 2 == 0)
+      {
+        //Treasure generating
+        for(i=0;i<lngt;i++)
+        {
+            var uai = infos[i].split(";");
+            WorldData.Load(Parsing.IntU(uai[0]));
+            var diamond_count = WorldData.GetCountOf(82,1);
+            var diode_probability = Math.pow(Parsing.FloatU(gameplay[131]),diamond_count) * Parsing.FloatU(gameplay[130]);
+
+            if(func.randomInteger(0,9999) < diode_probability * 10000)
+            {
+                if(WorldData.GetFob(Parsing.IntU(uai[1])+1)==81) //double check if all right
+                {
+                    var loc_dm = WorldData.GetNbt(Parsing.IntU(uai[1])+1,0);
+                    if(loc_dm > 0 && loc_dm < 5)
+                    {
+                        loc_dm++;
+                        NbtChanges.push([uai[0],uai[1],loc_dm].join(";"));
+                        WorldData.UpdateNbt(Parsing.IntU(uai[1])+1,0,loc_dm);
+                    }
+                }
+            }
+        }
+
+        //Treasure generation starting
+        for(i=0;i<lngt;i++)
+        {
+            var uai = infos[i].split(";");
+            WorldData.Load(Parsing.IntU(uai[0]));
+            var bases_count = WorldData.GetCountOf(81,-1);
+            var empty_bases_count = WorldData.GetCountOf(81,0);
+            var done_bases_count = WorldData.GetCountOf(81,5);
+            
+            if(empty_bases_count + done_bases_count == bases_count && empty_bases_count > 0)
+            {
+                var next_place;
+                do { next_place = func.randomInteger(1,20); }
+                while(WorldData.GetFob(next_place) != 81 || WorldData.GetNbt(next_place,0) != 0);
+
+                NbtChanges.push([uai[0],next_place-1,1].join(";"));
+                WorldData.UpdateNbt(next_place,0,1);
+            }
+        }
+      }
+      
+      NbtChanges = NbtChanges.join("|");
+      sendToAllPlayers("/RetTreasureFrame "+TreasureFrame+" "+NbtChanges+" X X");
+      Fob81Infos.makeTick();
+    }
+
     var v2_date_now = Date.now();
     var date_dif = v2_date_now - v1_date_now;
     if(date_dif>15) time_loan += date_dif-15;
@@ -3484,7 +3676,8 @@ setInterval(function () {  // <interval #2>
   if(config.show_positions) eff = "/RPU " + max_players + " ";
   else eff = ".RPU " + max_players + " ";
   eff += GetRPU(plr.players,lngt) + " ";
-  eff += current_tick;
+  eff += current_tick + " ";
+  eff += GetRPV(plr.players,lngt);
   eff += " X X"
   sendToAllPlayers(eff);
 
@@ -3519,7 +3712,7 @@ setInterval(function () {  // <interval #2>
       sendTo(se3_ws[i],"I "+plr.immID[i]+" "+plr.livID[i]+" X X"); //medium type message
   }
 
-}, 40);
+}, Math.ceil(1000/config.target_packet_frequency));
 
 //Waiter kicker (50 times per second by default)
 setInterval(function () { //<interval #3>
@@ -3544,7 +3737,9 @@ function kick(i)
   if(power_spec < 0) power_spec = 0; if(power_spec > 1) power_spec = 1;
   if([2,3].includes(artid)) pats[11] = (power_spec+"").replaceAll(".",",");
   plr.data[i] = pats.join(";");
-  SaveAllNow();
+  
+  if(config.save_all_on_every_disconnect) SaveAllNow();
+  else if (checkPlayerCn(i, plr.conID[i])) savePlayer(i);
 
   //Player cleaning
   console.log(hourHeader + plr.nicks[i] + " disconnected");
@@ -3713,7 +3908,7 @@ function intToRASCII(int)
   if(int>=31 && int<=123) return String.fromCharCode(int+4);
   return String.fromCharCode(1);
 }
-function insertFloatToChar4(str,delta,float)
+function insertFloatToChar4(str,delta,float) // Cyclic overflow
 {
   var i,lngt=str.length;
 
@@ -3733,6 +3928,33 @@ function insertFloatToChar4(str,delta,float)
     if(i==0)
     {
       num = num%62;
+      if(minus) num+=62;
+    }
+    str = str.replaceAt(ii,intToRASCII(num));
+  }
+
+  return str;
+}
+function insertFloatToChar2(str,delta,float) // Border overflow
+{
+  var i,lngt=str.length;
+
+  var minus = (float<0);
+  if(minus) float = -float;
+  
+  float *= 124 * 25;
+  float = Math.round(float);
+
+  var bs = [124,1];
+  for(i=0;i<2;i++)
+  {
+    var ii = lngt+delta+i;
+    var num = Math.floor(float/bs[i]);
+    float = float % bs[i];
+
+    if(i==0)
+    {
+      if(num>=62) num=61;
       if(minus) num+=62;
     }
     str = str.replaceAt(ii,intToRASCII(num));
@@ -3816,6 +4038,24 @@ function GetRPU(players,lngt)
       eff = insertFloatToChar4(eff,-9,Parsing.FloatU(splitted[0]));
       eff = insertFloatToChar4(eff,-5,Parsing.FloatU(splitted[1]));
       eff = insertRotToChar1(eff,-1,Parsing.FloatU(splitted[4]));
+    }
+  }
+
+  return eff;
+}
+
+function GetRPV(players,lngt)
+{
+  var i,eff="";
+  for(i=0;i<lngt;i++)
+  {
+    if(players[i]=="0") eff+="!";
+    else if(players[i]=="1") eff+="\"";
+    else
+    {
+      eff+="XXXX";
+      eff = insertFloatToChar2(eff,-4,plr.pclass[i].velocity_speculation[0]);
+      eff = insertFloatToChar2(eff,-2,plr.pclass[i].velocity_speculation[1]);
     }
   }
 
@@ -3913,7 +4153,8 @@ function GetRPC(players,lngt,sendAll)
 
   for(i=0;i<lngt;i++)
   {
-    if(players[i]=="0" || players[i]=="1") splitted = [0,0,0,0,0,"0&0","0","0","1"];
+    var dsp = plr.data[i].split(";");
+    if(players[i]=="0" || players[i]=="1") splitted = [0,0,0,0,0,"0&0",dsp[6],dsp[7],"1"];
     else splitted = players[i].split(";");
 
     var rbt;
@@ -4095,6 +4336,10 @@ function growActive(ulam)
                 drillC.push(tim);
             }
             else drillW[drillT.indexOf(ulam+"w"+i)] = 100;
+        }
+        if(block==81) // Treasure base segment
+        {
+            Fob81Infos.addElement(ulam+";"+i,35);
         }
     }
 }
@@ -4353,6 +4598,10 @@ function kill(pid)
   plr.pclass[pid].last_pos_changes = [];
   plr.pclass[pid].ctrlPower = 0;
 
+  plr.pclass[pid].shield_time = 0;
+  plr.pclass[pid].green_time = 0;
+  sendToAllPlayers("/RetShieldVisual "+pid+" F X X");
+
   sendToAllPlayers(
     "/RetInfoClient " +
       (plr.nicks[pid] + " has exploded").replaceAll(" ", "`") +
@@ -4574,11 +4823,6 @@ wss.on("connection", function connection(ws,req)
     });
     if(retbol) return;
 
-    //messages for connection counter
-    if(!MsgMap.has(ws)) MsgMap.set(ws,1);
-    else MsgMap.set(ws,MsgMap.get(ws)+1);
-    if(MsgMap.get(ws) > config.anti_cheat.max_messages_per_second) { ws.close(); return; }
-
     if (arg[0] == "/AllowConnection") // 1[nick] 2[RedVersion] 3[ConID]
     {
       if(!FilterArgs(arg,["nick","short","EndID"])) return;
@@ -4625,7 +4869,6 @@ wss.on("connection", function connection(ws,req)
           plr.sHealth[i] = Parsing.FloatU(plr.data[i].split(";")[8]);
           plr.sRegTimer[i] = Parsing.FloatU(plr.data[i].split(";")[10]);
           plr.pclass[i].DataImport(plr.data[i].split(";")[6],plr.data[i].split(";")[7],Parsing.FloatU(plr.data[i].split(";")[11]));
-          SaveAllNow();
 
           plr.conID[i] = arg[3];
           sendTo(ws,
@@ -4720,7 +4963,11 @@ wss.on("connection", function connection(ws,req)
       var censured = Censure(arg[2],arg[1],arg[msl-1]);
       if(!updateHasSense(plr.players[arg[1]],censured,arg[1],arg[4])) {kick(arg[1]); return;}
 
-      if(arg[4][3]=="T") plr.pclass[arg[1]].allowed_teleport_small = false;
+      if(arg[4][3]=="T")
+      {
+          sendToAllPlayers("/RetSmoothBreak "+arg[1]+" X X");
+          plr.pclass[arg[1]].allowed_teleport_small = false;
+      }
 
       if(censured=="1") arg[4]="FFF"+arg[4][3];
 
@@ -4731,28 +4978,29 @@ wss.on("connection", function connection(ws,req)
       plr.players[arg[1]] = censured;
       if(censured!="1")
       {
-        if(Parsing.IntU(censured.split(";")[5].split("&")[1])%25==1) hiddenFlags += "T";
-        else hiddenFlags += "F";
+        if(Parsing.IntU(censured.split(";")[5].split("&")[1])%25==1) hiddenFlags += "T"; else hiddenFlags += "F"; //invisibility
+        if(Parsing.IntU(censured.split(";")[5].split("&")[1])%25==2) hiddenFlags += "T"; else hiddenFlags += "F"; //impulse
         plr.data[arg[1]] = censured;
       }
-      else hiddenFlags += "F";
+      else hiddenFlags += "FF";
 
       //Small technicals
       if (plr.waiter[arg[1]] > 1) plr.waiter[arg[1]] = 250;
       sendTo(ws,"P"+arg[3]); //Short type command
 
       // Flags explained
-      // [0] - impulseEnabled
-      // [1] - impulseStarted     | POWER -= IMPULSE
+      // [0] - impulseEnabled (relict -> in hidden)
+      // [1] - impulseStarted
       // [2] - invisibilityPulse (relict)
       // [3] - doTeleport
 
       // Hidden flags
-      // [0] - invisible          | POWER_REGEN_BLOCKED, POWER -= ILLUSION_USE
+      // [0] - invisible
+      // [1] - impulseEnabled
 
       //Flags questioning
       var artef = getPlayerArtefact(arg[1]);
-      if(artef!=2 && (arg[4][0]=="T" || arg[4][1]=="T")) {kick(arg[1]); return;} //IMPULSE
+      if(artef!=2 && (hiddenFlags[1]=="T" || arg[4][1]=="T")) {kick(arg[1]); return;} //IMPULSE
       if(artef!=3 && (hiddenFlags[0]=="T" || arg[4][2]=="T")) {kick(arg[1]); return;} //ILLUSION
 
       //Flags executing
@@ -4760,6 +5008,8 @@ wss.on("connection", function connection(ws,req)
         var dtn = Date.now();
         var pl = plr.pclass[arg[1]];
         if(pl.impulse_wait > dtn) {kick(arg[1]); return;} // impulsed too fast
+        var ImpulseTime = Math.floor(Parsing.FloatU(gameplay[19])*50+2); if(ImpulseTime < 2) ImpulseTime = 2;
+        plr.pclass[arg[1]].SetVirtualShield(ImpulseTime,"orange");
         pl.impulse_wait = dtn + (Math.round(Parsing.FloatU(gameplay[102]))-3) * 20;
         plr.pclass[arg[1]].ctrlPower -= 0.2;
         plr.impulsed[arg[1]] = [];
@@ -4767,11 +5017,40 @@ wss.on("connection", function connection(ws,req)
       if(hiddenFlags[0]=="T") {
         plr.pclass[arg[1]].ctrlPower -= unit * Parsing.FloatU(gameplay[22]);
       }
-      plr.pclass[arg[1]].powerRegenBlocked = (hiddenFlags[0]=="T") || (arg[4][0]=="T");
+      plr.pclass[arg[1]].powerRegenBlocked = (hiddenFlags[0]=="T") || (hiddenFlags[1]=="T");
+      if(hiddenFlags[1]!="T") {
+          plr.pclass[arg[1]].shield_time = 0;
+      }
+
+      //Velocity speculation
+      var pap = plr.pclass[arg[1]];
+      if(arg[2]!="1")
+      {
+          var current_position = [
+            Parsing.FloatU(plr.players[arg[1]].split(";")[0]),
+            Parsing.FloatU(plr.players[arg[1]].split(";")[1])
+          ];
+
+          if(pap.previous_position != null)
+          {
+              pap.velocity_speculation = [
+                current_position[0] - pap.previous_position[0],
+                current_position[1] - pap.previous_position[1]
+              ];
+          }
+          else pap.velocity_speculation = [0,0];
+
+          pap.previous_position = current_position;
+      }
+      else
+      {
+          pap.previous_position = null;
+          pap.velocity_speculation = [0,0];
+      }
 
       //Impulse damage
       var j, caray = censured.split(";");
-      if(caray.length>1 && arg[4][0]=="T")
+      if(caray.length>1 && hiddenFlags[1]=="T")
       {
         var xa = Parsing.FloatU(caray[0]);
         var ya = Parsing.FloatU(caray[1]);
@@ -4817,6 +5096,7 @@ wss.on("connection", function connection(ws,req)
     {
       if(!plr.pclass[arg[1]].PeriodicInsert("chat")) return;
       if(!FilterArgs(arg,["PlaID","Msg256"])) return;
+      if(config.disable_chat) return;
       
       console.log("<" + plr.nicks[Parsing.FloatU(arg[1])] + "> " + arg[2].replaceAll("\t"," "));
       sendToAllPlayers("/RetChatMessage <" + plr.nicks[Parsing.FloatU(arg[1])] + "> " + arg[2] + " X X");
@@ -5204,14 +5484,14 @@ wss.on("connection", function connection(ws,req)
       }
 
       var pid=arg[1];
-      var tab = [0,55,61,71,57,59,63]; //special potion ID
+      var tab = [0,55,61,71,57,59,63,79]; //special potion ID
 
       if(!invChangeTry(arg[1],tab[arg[2]],-1,arg[3])) {
         kick(arg[1]);
         return;
       }
 
-      if(arg[2]=="1" || arg[2]=="2" || arg[2]=="3")
+      if(arg[2]=="1" || arg[2]=="2" || arg[2]=="3") //heal
       {
         var heal_size;
         if(arg[2]=="1") heal_size = gameplay[31];
@@ -5221,11 +5501,16 @@ wss.on("connection", function connection(ws,req)
         sendTo(ws,"/RetHeal "+arg[1]+" "+arg[2]+" X X");
       }
 
-      if(arg[2]=="5" || arg[2]=="3")
+      if(arg[2]=="5" || arg[2]=="3") //power
       {
         var artid = plr.backpack[arg[1]].split(";")[30] - 41;
         if(plr.backpack[arg[1]].split(";")[31]=="0") artid = -41;
         if(artid==2 || artid==3) plr.pclass[arg[1]].ctrlPower = 1;
+      }
+
+      if(arg[2]=="7") //shield
+      {
+        plr.pclass[pid].SetVirtualShield(Math.floor(Parsing.FloatU(gameplay[129])*50),"green");
       }
     }
     if (arg[0] == "/JunkDiscard") // 1[PlayerID] 2[Item] 3[Count]
@@ -5301,6 +5586,7 @@ wss.on("connection", function connection(ws,req)
         bef[0] = Parsing.FloatU(arg[2]);
         bef[1] = Parsing.FloatU(arg[3]);
         plr.players[arg[1]] = bef.join(";");
+        sendToAllPlayers("/RetSmoothBreak "+arg[1]+" X X");
         console.log("Teleported player "+plr.nicks[arg[1]]+" to coordinates: "+bef[0]+" "+bef[1]);
       }
     }
@@ -5471,6 +5757,133 @@ wss.on("connection", function connection(ws,req)
           " X " + plr.livID[fPlayerID]
       );
       sendTo(ws,"/RetFobsPing "+arg[1]+";"+arg[2]+";"+arg[3]+" X X");
+    }
+    if (arg[0] == "/DiamondPlaceTry") // 1[PlayerID] 2[UlamID] 3[PlaceID] 4[Slot]
+    {
+      if(!plr.pclass[arg[1]].PeriodicInsert("fob_modify")) {kick(arg[1]); return;}
+      if(!FilterArgs(arg,["PlaID","ulam","place","Slot"])) return;
+      var overolded = (arg[msl-1] != plr.livID[arg[1]] || inHeaven(arg[1]));
+
+      var fPlayerID = arg[1];
+      var fUlamID = arg[2];
+      var fPlaceID = arg[3];
+      var fDropID = "33";
+      var fCount = "-1";
+      var fSlot = arg[4];
+
+      var ppos; if(!overolded) ppos = getPlayerPosition(arg[1]);
+      WorldData.Load(Parsing.IntU(fUlamID));
+      if(WorldData.GetFob(Parsing.IntU(fPlaceID)+1)==82 && WorldData.GetNbt(Parsing.IntU(fPlaceID)+1,0)!=1 && !overolded)
+      if(AsteroidPresency(fUlamID,new Vector3(Parsing.FloatU(ppos[0]),Parsing.FloatU(ppos[1]),0)))
+      {
+        if (invChangeTry(fPlayerID, fDropID, fCount, fSlot))
+        {
+          WorldData.UpdateNbt(Parsing.IntU(fPlaceID)+1,0,1);
+          sendToAllPlayers(
+            "/RetSolidNbt " +
+              fUlamID + " " +
+              fPlaceID + " " +
+              nbt(fUlamID,fPlaceID) +
+              " X X"
+          );
+          sendTo(ws,
+            "/RetInventory " +
+              fPlayerID + " " +
+              fDropID + " 0 " +
+              fSlot + " " +
+              -fCount +
+              " X " + plr.livID[fPlayerID]
+          );
+          return;
+        }
+        else {kick(fPlayerID); return;}
+      }
+
+      sendTo(ws,
+        "/RetSolidNbt " +
+          fUlamID + " " +
+          fPlaceID + " " +
+          nbt(fUlamID,fPlaceID) +
+          " X X"
+      );
+      sendTo(ws,
+        "/RetInventory " +
+          fPlayerID + " " +
+          fDropID + " " +
+          -fCount + " " +
+          fSlot + " " +
+          fCount +
+          " X " + plr.livID[fPlayerID]
+      );
+    }
+    if (arg[0] == "/TreasurePickUpTry") // 1[PlayerID] 2[UlamID] 3[PlaceID] 4[Slot]
+    {
+      if(!plr.pclass[arg[1]].PeriodicInsert("fob_modify")) {kick(arg[1]); return;}
+      if(!FilterArgs(arg,["PlaID","ulam","place","Slot"])) return;
+      var overolded = (arg[msl-1] != plr.livID[arg[1]] || inHeaven(arg[1]));
+
+      var fPlayerID = arg[1];
+      var fUlamID = arg[2];
+      var fPlaceID = arg[3];
+      var fDropID = "?";
+      var fCount = "?";
+      var fSlot = arg[4];
+
+      WorldData.Load(Parsing.IntU(fUlamID));
+      var tr_type = WorldData.GetType() % 16;
+      var tr_strings = [gameplay[105],gameplay[106],gameplay[125],gameplay[126],gameplay[127]];
+      tr_type = FindTreasureInLocation(tr_strings, tr_type);
+      if(tr_type==-1) {kick(fPlayerID); return;}
+
+      var treTab = plr.pclass[fPlayerID].NextDropsT[tr_type][0].split(";");
+      fDropID = treTab[0];
+      fCount = treTab[1];
+
+      var ppos; if(!overolded) ppos = getPlayerPosition(arg[1]);
+      if(WorldData.GetFob(Parsing.IntU(fPlaceID)+1)==81 && WorldData.GetNbt(Parsing.IntU(fPlaceID)+1,0)==5 && !overolded)
+      if(AsteroidPresency(fUlamID,new Vector3(Parsing.FloatU(ppos[0]),Parsing.FloatU(ppos[1]),0)))
+      {
+        if (invChangeTry(fPlayerID, fDropID, fCount, fSlot))
+        {
+          WorldData.UpdateNbt(Parsing.IntU(fPlaceID)+1,0,0);
+          plr.pclass[fPlayerID].TreasureArrayUpdate(tr_type,true);
+          sendToAllPlayers(
+            "/RetSolidNbt " +
+              fUlamID + " " +
+              fPlaceID + " " +
+              nbt(fUlamID,fPlaceID) +
+              " X X"
+          );
+          sendTo(ws,
+            "/RetInventory " +
+              fPlayerID + " " +
+              fDropID + " 0 " +
+              fSlot + " " +
+              -fCount +
+              " X " + plr.livID[fPlayerID]
+          );
+          return;
+        }
+        else {kick(fPlayerID); return;}
+      }
+
+      plr.pclass[fPlayerID].TreasureArrayUpdate(tr_type,false);
+      sendTo(ws,
+        "/RetSolidNbt " +
+          fUlamID + " " +
+          fPlaceID + " " +
+          nbt(fUlamID,fPlaceID) +
+          " X X"
+      );
+      sendTo(ws,
+        "/RetInventory " +
+          fPlayerID + " " +
+          fDropID + " " +
+          -fCount + " " +
+          fSlot + " " +
+          fCount +
+          " X " + plr.livID[fPlayerID]
+      );
     }
     if (arg[0] == "/BulletSend") // 1[PlayerID] 2[type] 3,4[vector] 5[ID] 6[BulletSource] 7[Slot] 8,9[position]
     {
@@ -5755,7 +6168,7 @@ function FilterArgs(args,formats,include_headers=true)
         if(format=="count") format = "int -9999999 9999999";
         if(format=="count+") format = "int 1 9999999";
         if(format=="count-") format = "int -9999999 -1";
-        if(format=="PotionID") format = "int 1 6";
+        if(format=="PotionID") format = "int 1 7";
         if(format=="DrillID") format = "int 0 15";
         if(format=="0-16k") format = "int 0 15999";
         if(format=="float") format = "float -1e+32 1e+32";
@@ -5823,7 +6236,9 @@ function FilterArgs(args,formats,include_headers=true)
               (p==51) ||
               (p>=54 && p<=62 && p%2==0) ||
               (p>=64 && p<=70) ||
-              (p>=73 && p<=78)
+              (p>=73 && p<=78) ||
+              (p==80) ||
+              (p==85)
             )) return false;
             args[i] = p+"";
         }
@@ -7079,7 +7494,7 @@ class Commands
             if(!Parsing.IntC(arg[2]) || !Parsing.IntC(arg[3])) {
                 console.log("Item and count should be integers.");
             }
-            if(item<=0 || count<=0 || item>127) {
+            else if(item<=0 || item>127 || count<=0 || count>9999999) {
                 console.log("Wrong numbers were used.");
             }
             else {

@@ -2,11 +2,11 @@
 
 <
 Datapack documentation:
-https://se3.page/docs/Beta-2.2/SE3Documentation/
-Edit file and select it in your SE3 browser.
+https://se3.page/docs/Release-2.3/SE3Documentation/
+Edit file and select it in your SE3 selector.
 >
 
-version: 'Beta 2.2'; <Don't change>
+version: 'Release 2.3'; <Don't change>
 name: 'DEFAULT'; <Rename it>
 craftings
 {
@@ -58,8 +58,7 @@ craftings
 		1: stone(2) -> stone_drill;
 		2: gold(2) -> golden_drill;
 		3: magnetic_stone(3) -> magnetic_lamp;
-		4: copper(3) + coal -> copper_diode;
-		5: stone(3) + small_diamond -> stone_with_crystals;
+		4: stone(3) + small_diamond -> stone_with_crystals;
 	}
 	<Category>7
 	{
@@ -83,19 +82,20 @@ craftings
 	}
 	<Category>10
 	{
-		title_image: stone_tomb;
-		1: packed_stone + dead_alien -> stone_tomb;
-		2: packed_dark_stone + dead_alien -> dark_tomb;
-		3: stone_tomb -> dead_alien;
-		4: dark_tomb -> dead_alien;
+		title_image: copper_chimney;
+		1: packed_copper -> copper_cog(2);
+		2: copper(3) + coal -> copper_diode;
+		3: packed_copper(2) + coal(2) -> small_copper_chimney;
+		4: small_copper_chimney(5) -> copper_chimney;
 	}
 	<Category>11
 	{
-		title_image: dead_alien;
+		title_image: stone_tomb;
 		1: dead_alien -> bone(3);
-		2: dead_alien + bush(3) -> alien;
-		3: dead_alien + magnetic_stone(3) -> magnetic_alien;
-		4: dead_alien + red_spikes -> red_alien;
+		2: packed_stone + dead_alien -> stone_tomb;
+		3: packed_dark_stone + dead_alien -> dark_tomb;
+		4: stone_tomb -> dead_alien;
+		5: dark_tomb -> dead_alien;
 	}
 	<Category>12
 	{
@@ -119,6 +119,8 @@ drill_loot
 	diamond: small_diamond(2%);
 	metalic: stone(50%);
 	bone: bone(92%) + blank_element(8%);
+	stone_clone: stone(100%);
+	copper_clone: copper(100%);
 }
 modified_drops
 {
@@ -127,6 +129,7 @@ modified_drops
 	big_bush: bush(3);
 	medium_diamond: small_diamond(2);
 	magnetic_alien_activated: magnetic_alien;
+	copper_chimney: small_copper_chimney(5);
 }
 gameplay
 {
@@ -172,35 +175,36 @@ gameplay
 	boss_fire_damage: 4;
 	wind_boss_push: 25;
 	
-	<HEALING>
+	<POTIONS>
 	healing_potion_hp: 20;
 	blank_potion_hp: 15;
 	killing_potion_hp: 15;
+	shield_potion_duration: 2,5;
 	
 	<GROW TIMES>
 	amethyst_grow_time_min: 60;
 	amethyst_grow_time_max: 180;
 	magnetic_alien_grow_time: 3;
 
+	<FACTORY>
+	factory_default_diode_chance: 0,03165;
+	factory_diamond_modifier: 1,35;
+	active_diamond_base_chance: 0,2;
+
 	<UPGRADES>
-	upg_1_item: 10;
-    upg_1_cost: 5;
-    upg_2_item: 10;
-    upg_2_cost: 10;
-    upg_3_item: 10;
-    upg_3_cost: 15;
-    upg_4_item: 10;
-    upg_4_cost: 20;
-    upg_5_item: 10;
-    upg_5_cost: 25;
+	upg_1_item: 10; upg_1_cost: 5;
+    upg_2_item: 10; upg_2_cost: 10;
+    upg_3_item: 10; upg_3_cost: 15;
+    upg_4_item: 10; upg_4_cost: 20;
+    upg_5_item: 10;	upg_5_cost: 25;
 	
 	<ARTEFACTS>
 	at_protection_health_level_add: 2,272;
 	at_protection_health_regenerate_multiplier: 1,5;	<relative variable>	
-	at_impulse_power_regenerate_multiplier: 1;
+	at_impulse_power_regenerate_multiplier: 0,75;
 	at_impulse_time: 0,4;
 	at_impulse_speed: 70;
-	at_impulse_damage: 10;
+	at_impulse_damage: 8;
 	at_illusion_power_regenerate_multiplier: 1;
 	at_illusion_power_use_multiplier: 2;
 	at_illusion_speed_multiplier: 1,2;
@@ -288,23 +292,32 @@ gameplay
 	treasure_loot:
 		8-3-6-0-1249-
 		54-2-4-1250-2499-
-		48-1-2-2500-3399-
-		55-1-2-3400-5199-
-		57-1-2-5200-6999-
-		10-4-8-7000-8499-
-		5-4-8-8500-9999;
+		55-1-2-2500-4299-
+		57-1-2-4300-6099-
+		10-4-8-6100-7599-
+		5-4-8-7600-9099-
+		48-1-2-9100-9849-
+		33-1-3-9850-9999;
 	dark_treasure_loot:
-		66-3-6-0-1199-
-		54-2-4-1200-2399-
-		48-1-3-2400-3299-
-		59-1-2-3300-4849-
-		61-1-2-4850-6399-
-		71-1-2-6400-6999-
-		10-4-8-7000-8399-
-		5-4-8-8400-9799-
-		33-1-3-9800-9999;
+		66-3-6-0-1249-
+		54-2-4-1250-2499-
+		59-1-2-2500-4099-
+		61-1-2-4100-5699-
+		10-4-8-5700-7399-
+		5-3-6-7400-9099-
+		71-1-2-9100-9699-
+		33-1-3-9700-9999;
 	metal_treasure_loot:
-		9-1-3-0-9999;
+		80-2-4-0-1249-
+		63-1-1-1250-2499-
+		24-30-60-2500-4699-
+		39-20-40-4700-6499-
+		5-3-6-6500-8099-
+		48-3-6-8100-9179-
+		85-1-1-9180-9199-
+		79-1-2-9200-9799-
+		33-1-1-9800-9929-
+		33-2-2-9930-9999 + 3;
 	soft_treasure_loot:
 		8-1-3-0-9999;
 	hard_treasure_loot:
@@ -370,6 +383,13 @@ generator_settings
 			structural, struct=4,
 			radius = 80, even,
 			density = 100%,
+
+			<works for every structure globally>
+			boss.1.color-74-255-182,	<Protector>
+			boss.2.color-255-145-69,	<Adecodron>
+			boss.3.color-255-112-237,	<Octogone>
+			boss.4.color-255-216-62,	<Starandus>
+			boss.6.color-255-136-146,	<Degenerator>
 		];
 		
 		all_sizes: metalic(100%);
@@ -388,7 +408,7 @@ generator_settings
 	}
 	<Cementery> 6
 	{
-		chance: 2,7%;
+		chance: 2%;
 		settings: [
 			bgcolor-255-252-220,
 			structural, struct=1,
@@ -403,7 +423,7 @@ generator_settings
 	}
 	<Dark cementery> 7
 	{
-		chance: 1,3%;
+		chance: 1%;
 		settings: [
 			bgcolor-255-174-181,
 			structural, struct=2,
@@ -430,20 +450,21 @@ generator_settings
 	}
 	<Copper facilities> 9
 	{
-		chance: 0%;
+		chance: 1,5%;
 		settings: [
-			radius = 60,
-			density = 90%,
+			bgcolor-255-151-81,
+			min = 50, max = 70,
+			density = 85%,
 			priority = 24,
 		];
 		
-		<Size>4: metalic(100%);
-		<Size>5: metalic(100%);
-		<Size>6: bone(100%);
-		<Size>7: copperA(70%) + metalic(30%);
-		<Size>8: copperA(70%) + metalic(30%);
-		<Size>9: copperA(50%) + bedrock(50%);
-		<Size>10: bedrock(100%);
+		<Size>10: copperA(100%);
+		<Size>9: copperB(100%);
+		<Size>8: copperA(100%);
+		<Size>7: copperA(40%) + redA(40%) + metalic(20%);
+		<Size>6: copperA(30%) + redA(30%) + metalic(40%);
+		<Size>5: copperA(20%) + redA(20%) + metalic(60%);
+		<Size>4: copperA(60%) + metalic(40%);
 	}
 	<max 31 biomes + default>
 }
@@ -454,7 +475,8 @@ objects_generate
 	stoneB: stone(15%) + bone(20%) + stone_tomb(24%) + treasure(6%) + dead_alien(1%) + pumpkin(1%);
 	dark: dark_stone(15%) + bone(12%) + dark_tomb(24%) + dark_treasure(6%) + lava_geyzer(8%) + gold(3%);
 	copper: copper(35%);
-	copperA: copper(35%) + packed_copper(15%) + copper_chimney(5%);
+	copperA: copper(15%) + packed_copper(5%) + copper_diode(20%) + copper_cog(25%) + small_copper_chimney(15%) + metal_treasure(3%);
+	copperB: copper(10%) + copper_cog(15%) + bedrock_cog(15%) + micro_bedrock_chimney(10%) + bedrock_alien(5%) + treasure_base(13%) + diamond_base(13%);
 	gold: gold(25%);
 	grass: bush(35%) + big_bush(7,5%) + stone(7,5%) + alien(15%);
 	amethyst: small_amethyst(20%) + medium_amethyst(20%) + large_amethyst(20%);
@@ -463,6 +485,7 @@ objects_generate
 	magnetic: magnetic_stone(35%) + magnetic_alien_activated(15%);
 	magneticA: magnetic_stone(35%) + magnetic_alien_activated(15%) + mega_geyzer(8%) + wind_bullet(0,2%);
 	red: red_stone(35%) + red_spikes(7,5%) + red_alien(15%);
+	redA: red_stone(35%) + packed_red(7,5%) + red_spikes(10%);
 	diamond: medium_diamond(15%) + small_diamond(25%);
 	metalic: stone(35%) + metal_piece(25%);
 	metalicA: stone(35%) + metal_piece(25%) + unstable_matter(8%);
@@ -489,6 +512,8 @@ game_translate <low-level settings>
 		11: metalic;
 		12: bedrock;
 		13: bone;
+		14: stone_clone;
+		15: copper_clone;
 	}
 	Items_and_objects
 	{
@@ -511,11 +536,11 @@ game_translate <low-level settings>
 		17: packed_stone;
 		18: packed_copper;
 		19: packed_gold;
-		20: respawn;					<only item>
+		20: respawn;
 		21: storage;
 		22: packed_magnetic_stone;
-		23: magnetic_alien_activated;	<only object>
-		24: copper_bullet;				<only item>
+		23: magnetic_alien_activated;
+		24: copper_bullet;
 		25: magnetic_alien;
 		26: packed_coal;
 		27: red_alien;
@@ -530,7 +555,7 @@ game_translate <low-level settings>
 		36: golden_drill;
 		37: treasure;
 		38: geyzer;
-		39: red_bullet;					<only item>
+		39: red_bullet;
 		40: dead_alien;
 		41: gray_artefact;
 		42: protection_artefact;
@@ -540,29 +565,29 @@ game_translate <low-level settings>
 		46: useless_artefact;
 		47: unstable_artefact;
 		48: unstable_matter;
-		49: packed_bedrock;				<only object>
-		50: bedrock_stone;				<only object>
+		49: packed_bedrock;
+		50: bedrock_stone;
 		51: metal_piece;
-		52: bedrock_storage;			<only arena object>
-		53: bedrock_alien;				<only object>
+		52: bedrock_storage;
+		53: bedrock_alien;
 		54: bone;
-		55: healing_potion;				<only item>
+		55: healing_potion;
 		56: magic_element;
-		57: turbo_potion;				<only item>
+		57: turbo_potion;
 		58: turbo_element;
-		59: power_potion;				<only item>
+		59: power_potion;
 		60: power_element;
-		61: blank_potion;				<only item>
+		61: blank_potion;
 		62: blank_element;
-		63: killing_potion;				<only item>
-		64: wind_bullet;				<only item>
+		63: killing_potion;
+		64: wind_bullet;
 		65: fire_bullet;
 		66: dark_stone;
 		67: packed_dark_stone;
 		68: dark_treasure;
 		69: dark_tomb;
 		70: lava_geyzer;
-		71: max_potion;					<only item>
+		71: max_potion;
 		72: total_vacuum;
 		73: metal_treasure;
 		74: soft_treasure;				<for datapack use>
@@ -570,6 +595,13 @@ game_translate <low-level settings>
 		76: small_copper_chimney;
 		77: copper_diode;
 		78: tiger_gem;
+		79: shield_potion;
+		80: copper_cog;
+		81: treasure_base;
+		82: diamond_base;
+		83: bedrock_cog;
+		84: micro_bedrock_chimney;
+		85: supreme_white_diode;
 	}
 }
 custom_structures <advanced settings>

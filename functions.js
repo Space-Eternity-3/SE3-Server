@@ -260,6 +260,10 @@ class cfun
             "soft_treasure_loot:s", //126
             "hard_treasure_loot:s", //127
             "at_illusion_speed_multiplier:*", //128
+            "shield_potion_duration:+", //129
+            "factory_default_diode_chance:+", //130
+            "factory_diamond_modifier:+", //131
+            "active_diamond_base_chance:+", //132
         ];
     }
 
@@ -435,7 +439,7 @@ class cfun
             var ret="", str=value+"";
             var i,lngt=str.length;
             for(i=0;i<lngt;i++)
-                if(["0","1","2","3","4","5","6","7","8","9","-"].includes(str[i])) ret+=str[i];
+                if(["0","1","2","3","4","5","6","7","8","9","-","+"].includes(str[i])) ret+=str[i];
             return ret;
         }
     }
