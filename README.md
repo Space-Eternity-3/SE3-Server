@@ -1,4 +1,4 @@
-# SE3 Server
+# SE3-Server
 
 This is the official server for Space Eternity 3 written in `node.js` (JavaScript) and separated from other game files. This repository is the exact copy of the `./ServerReady` folder from the main [Space-Eternity-3](https://github.com/Space-Eternity-3/Space-Eternity-3) repository.
 
