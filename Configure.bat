@@ -1,3 +1,3 @@
 @echo off
-npm i
+call npm i
 pause
