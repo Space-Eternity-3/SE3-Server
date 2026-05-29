@@ -9,6 +9,6 @@
   "author": "Kamiloso <kamiloso.skoposo@gmail.com>",
   "dependencies": {
     "readline-sync": "^1.4.10",
-    "ws": "^8.18.0"
+    "ws": "^8.20.1"
   }
 }
